@@ -1,0 +1,14 @@
+{
+    "C_Cpp.intelliSenseEngine": "default",
+    "idf.espIdfPath": "/opt/esp/idf",
+    "idf.pythonInstallPath": "/opt/esp/python_env/idf5.5_py3.12_env/bin/python",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.port": "/dev/cu.usbmodem1101",
+    "idf.toolsPath": "/opt/esp",
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32s3"
+    },
+    "idf.flashType": "UART"
+}
