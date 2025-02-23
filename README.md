@@ -13,10 +13,19 @@
 - GPIO 2 - Left servo
 - GPIO 4 - Right servo
 
-- I2C (IMU)
+### I2C (IMU)
 - GPIO 8 - SDA IMU
 - GPIO 9 - SCL IMU
 
-- UART (GPS)
+### UART (GPS)
 - TX - GPS TX
 - RX - GPS RX
+
+## Core jobs
+### Core 0
+- Strobe
+
+### Core 1
+- Data interpretation
+- Flight path algorithm
+- Flight surface manipulation
