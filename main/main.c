@@ -15,23 +15,23 @@
 /*
 // PINOUT MAP
 // 
-// GPIO 10 - LED
-// GPIO 11 - LED 2
+// GPIO 10 - LED - Gray
+// GPIO 11 - LED 2 - Gray
 //
-// GPIO 2 - Left servo
-// GPIO 4 - Right servo
+// GPIO 2 - Left servo - White
+// GPIO 4 - Right servo - Purple
 //
 // IMU, using SPI
-// GPIO 26 - IMU INT
-// GPIO 32 - IMU reset
-// GPIO 33 - IMU chip select
-// GPIO 18 - IMU SCL
-// GPIO 19 - IMU SDA
-// GPIO 23 - IMU DI
+// GPIO 16 - IMU INT - Purple
+// GPIO 15 - IMU reset - Brown
+// GPIO 7 - IMU chip select - Gray
+// GPIO 18 - IMU SCL - Blue
+// GPIO 17 - IMU SDA - Green
+// GPIO 8 - IMU DI - Yellow
 //
 // UART
-// TX - GPS TX
-// RX - GPS RX
+// TX - GPS TX - White
+// RX - GPS RX - Yellow
 //
 // ---------------------
 //
