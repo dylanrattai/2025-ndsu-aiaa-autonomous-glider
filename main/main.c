@@ -9,6 +9,8 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include <esp_err.h>
+#include "bno08x_wrapper.h"
 
 /*
 // PINOUT MAP
@@ -19,9 +21,13 @@
 // GPIO 2 - Left servo
 // GPIO 4 - Right servo
 //
-// I2C
-// GPIO 8 - SDA IMU
-// GPIO 9 - SCL IMU
+// IMU, using SPI
+// GPIO 26 - IMU INT
+// GPIO 32 - IMU reset
+// GPIO 33 - IMU chip select
+// GPIO 18 - IMU SCL
+// GPIO 19 - IMU SDA
+// GPIO 23 - IMU DI
 //
 // UART
 // TX - GPS TX
@@ -34,15 +40,42 @@
 // Core 1 - Flightpath algorithm, servo manipuation
 */
 
+/*
+// BNO085 Euler Info
+//
+// Gyro (degrees)
+// type - bno08x_euler_t
+// x - Roll
+// y - Pitch
+// z - Yaw
+//
+// Gyro Accelerometer (rad/s)
+// type - bno08x_gyro_t
+// x - Roll
+// y - Pitch
+// z - Yaw
+//
+// Linear Accelerometer (m/s^2)
+// type - bno08x_accel_t
+// x - x acceleration
+// y - y acceleration
+// z - z acceleration
+*/
+
+/*
+// TODO:
+// Test IMU connection & output
+*/
+
 // Var setup
 bool stop = false;
 TaskHandle_t strobeTask;
+TaskHandle_t imuTask;
+static const char *TAG = "Main";
 #define LED_1_GPIO GPIO_NUM_10
 #define LED_2_GPIO GPIO_NUM_11
 #define SERVO_LEFT_GPIO GPIO_NUM_2
 #define SERVO_RIGHT_GPIO GPIO_NUM_4
-#define IMU_SDA GPIO_NUM_8
-#define IMU_SCL GPIO_NUM_9
 
 /*
 // Asynchronous LED strobe function
@@ -70,6 +103,96 @@ void StrobeTask()
     }
 }
 
+void ImuDataReady() {
+    ESP_LOGI("IMU", "New Data Available!");
+
+    // Fetch data from the IMU
+    bno08x_euler_t euler = bno08x_get_euler_angles();
+    bno08x_gyro_t gyro = bno08x_get_gyro_data();
+    bno08x_accel_t accel = bno08x_get_accel_data();
+
+    // Log the data
+    ESP_LOGI("IMU", "Roll: %.2f, Pitch: %.2f, Yaw: %.2f", euler.x, euler.y, euler.z);
+    ESP_LOGI("IMU", "Gyro X: %.2f rad/s, Y: %.2f rad/s, Z: %.2f rad/s", gyro.x, gyro.y, gyro.z);
+    ESP_LOGI("IMU", "Accel X: %.2f m/s², Y: %.2f m/s², Z: %.2f m/s²", accel.x, accel.y, accel.z);
+}
+
+// Init IMU
+void ImuTask()
+{
+    ESP_LOGI(TAG, "Initializing IMU.");
+
+    if (!bno08x_initialize()) {
+        ESP_LOGE(TAG, "IMU Initialization Failed!");
+        vTaskDelete(NULL);
+    }
+}
+
+// Call in the start of any function that uses imu information
+void UpdateImu()
+{
+    bno08x_register_callback(ImuDataReady);
+}
+
+/*
+// Getters for Roll, Pitch, Yaw, Gyro Euler; Xacc, Yacc, Zacc, Acceleration Euler.
+*/
+float GetRoll()
+{
+    bno08x_euler_t euler = bno08x_get_euler_angles();
+    return euler.x;
+}
+float GetPitch()
+{
+    bno08x_euler_t euler = bno08x_get_euler_angles();
+    return euler.y;
+}
+float GetYaw()
+{
+    bno08x_euler_t euler = bno08x_get_euler_angles();
+    return euler.z;
+}
+bno08x_euler_t GetGyroEuler()
+{
+    return bno08x_get_euler_angles();
+}
+// Gyro Accelerometer
+float GetGyroRollAccel()
+{
+    bno08x_gyro_t gyro = bno08x_get_gyro_data();
+    return gyro.x;
+}
+float GetGyroPitchAccel()
+{
+    bno08x_gyro_t gyro = bno08x_get_gyro_data();
+    return gyro.y;
+}
+float GetGyroYawAccel()
+{
+    bno08x_gyro_t gyro = bno08x_get_gyro_data();
+    return gyro.z;
+}
+bno08x_gyro_t GetGyroAccelEuler()
+{
+    return bno08x_get_gyro_data();
+}
+// Linear Accelerometer
+float GetXAccel()
+{
+    bno08x_accel_t accel = bno08x_get_accel_data();
+    return accel.x;
+}
+float GetYAccel()
+{
+    bno08x_accel_t accel = bno08x_get_accel_data();
+    return accel.y;
+}
+float GetZAccel()
+{
+    bno08x_accel_t accel = bno08x_get_accel_data();
+    return accel.x;
+}
+
 /*
 // Set servo position function
 // position can be from -90 to 90
@@ -81,9 +204,12 @@ void SetServoPositionTask(int position)
 
 void app_main(void)
 {
+    stop = true; // stop program until limit switch detects it is disconnected from the plane
+
     // Strobe lights, max priority because if they are not on, no bonus points
     // Pinned to core 1 alone so it doesnt interrupt any other functions
     xTaskCreatePinnedToCore(StrobeTask, "StrobeTask", 1000, NULL, 10, &strobeTask, 1);
 
     // Other tasks, pinned to core 0
+    xTaskCreatePinnedToCore(ImuTask, "IMU Task", 4096, NULL, 8, &imuTask, 0);
 }
