@@ -1,5 +1,23 @@
-idf_component_register(SRCS "main.c"
-                       PRIV_REQUIRES spi_flash
-                       INCLUDE_DIRS ""
-                       REQUIRES driver
+idf_component_register(SRCS 
+                            "main.c" 
+                            "gps_wrapper.c" 
+                            "gps_wrapper.h" 
+                            "bno08x_wrapper.cpp" 
+                            "bno08x_wrapper.h"
+                            "../components/esp32_BNO08x/source"  
+                            "../components/esp32_BNO08x/source/report" 
+                            "../components/esp32_BNO08x/SH2"
+                       PRIV_REQUIRES 
+                            spi_flash
+                       INCLUDE_DIRS 
+                            "../components/esp32_BNO08x/include" 
+                            "../components/esp32_BNO08x/include/report" 
+                            "../components/esp32_BNO08x/include/callback" 
+                            "../components/esp32_BNO08x/SH2" 
+                            "../etl/include"
+                       REQUIRES 
+                            driver 
+                            esp_timer 
+                            cmock 
+                            esp32_BNO08x
                        )

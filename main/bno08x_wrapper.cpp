@@ -1,77 +1,106 @@
+// Optional fallback definitions for configuration macros.
+// In production, these should come from your project's Kconfig/sdkconfig.
+#ifndef CONFIG_ESP32_BNO08X_SPI_HOST
+#define CONFIG_ESP32_BNO08X_SPI_HOST 1
+#endif
+#ifndef CONFIG_ESP32_BNO08X_GPIO_DI
+#define CONFIG_ESP32_BNO08X_GPIO_DI 23
+#endif
+#ifndef CONFIG_ESP32_BNO08X_GPIO_SDA
+#define CONFIG_ESP32_BNO08X_GPIO_SDA 19
+#endif
+#ifndef CONFIG_ESP32_BNO08X_GPIO_SCL
+#define CONFIG_ESP32_BNO08X_GPIO_SCL 18
+#endif
+#ifndef CONFIG_ESP32_BNO08X_GPIO_CS
+#define CONFIG_ESP32_BNO08X_GPIO_CS 33
+#endif
+#ifndef CONFIG_ESP32_BNO08X_GPIO_HINT
+#define CONFIG_ESP32_BNO08X_GPIO_HINT 26
+#endif
+#ifndef CONFIG_ESP32_BNO08X_GPIO_RST
+#define CONFIG_ESP32_BNO08X_GPIO_RST 32
+#endif
+#ifndef CONFIG_ESP32_BNO08X_SCL_SPEED_HZ
+#define CONFIG_ESP32_BNO08X_SCL_SPEED_HZ 2000000
+#endif
+// (Define any other missing macros as needed.)
+
 #include "BNO08x.hpp"
 #include "bno08x_wrapper.h"
 #include "esp_log.h"
 
-static const constexpr char *TAG = "BNO08x_C_Wrapper";
+// Tag for ESP logging
+static const char *TAG = "BNO08x_C_Wrapper";
 
-static BNO08x imu;  // IMU Object
-static bno08x_callback_t imu_callback = nullptr;  // Store user-defined callback function
+// Create a static instance of the C++ IMU object.
+static BNO08x imu;
 
-// Internal function to handle IMU updates
-static void imu_data_handler() {
-    if (imu_callback) {
-        imu_callback();  // Call the registered callback function
+// Store the user callback (if any)
+static bno08x_callback_t user_callback = NULL;
+
+// Internal callback function that the C++ library will invoke.
+static void internal_callback_handler() {
+    if (user_callback) {
+        user_callback();
     }
 }
 
 extern "C" {
 
-// Initialize the IMU
-bool bno08x_initialize() {
+bool bno08x_initialize(void) {
     if (!imu.initialize()) {
         ESP_LOGE(TAG, "IMU Initialization Failed");
         return false;
     }
-    imu.rpt.rv_game.enable(100000UL);  // Enable Game Rotation Vector (100ms interval)
-    imu.rpt.cal_gyro.enable(100000UL); // Enable Calibrated Gyro Data (100ms interval)
+    // Enable various sensor reports (using 100,000 microseconds = 100ms interval)
+    imu.rpt.rv_game.enable(100000UL);
+    imu.rpt.cal_gyro.enable(100000UL);
     imu.rpt.linear_accelerometer.enable(100000UL);
     return true;
 }
 
-// Check if new data is available
-bool bno08x_data_available() {
+bool bno08x_data_available(void) {
     return imu.data_available();
 }
 
-// Get Euler angles (Roll, Pitch, Yaw)
-bno08x_euler_t bno08x_get_euler_angles() {
-    bno08x_euler_t euler = {0};
+bno08x_euler_c_t bno08x_get_euler_angles(void) {
+    bno08x_euler_c_t result = {0.0f, 0.0f, 0.0f};
     if (imu.rpt.rv_game.has_new_data()) {
-        bno08x_euler_angle_t angles = imu.rpt.rv_game.get_euler();
-        euler.x = angles.x;
-        euler.y = angles.y;
-        euler.z = angles.z;
+        // The library returns a C++ type (e.g., bno08x_euler_angle_t) from get_euler()
+        auto angles = imu.rpt.rv_game.get_euler();
+        result.x = angles.x;
+        result.y = angles.y;
+        result.z = angles.z;
     }
-    return euler;
+    return result;
 }
 
-// Get Gyroscope Data
-bno08x_gyro_t bno08x_get_gyro_data() {
-    bno08x_gyro_t gyro = {0};
+bno08x_gyro_c_t bno08x_get_gyro_data(void) {
+    bno08x_gyro_c_t result = {0.0f, 0.0f, 0.0f};
     if (imu.rpt.cal_gyro.has_new_data()) {
-        bno08x_gyro_t velocity = imu.rpt.cal_gyro.get();
-        gyro.x = velocity.x;
-        gyro.y = velocity.y;
-        gyro.z = velocity.z;
+        auto gyro = imu.rpt.cal_gyro.get();
+        result.x = gyro.x;
+        result.y = gyro.y;
+        result.z = gyro.z;
     }
-    return gyro;
+    return result;
+}
+
+bno08x_accel_c_t bno08x_get_accel_data(void) {
+    bno08x_accel_c_t result = {0.0f, 0.0f, 0.0f};
+    if (imu.rpt.linear_accelerometer.has_new_data()) {
+        auto accel = imu.rpt.linear_accelerometer.get();
+        result.x = accel.x;
+        result.y = accel.y;
+        result.z = accel.z;
+    }
+    return result;
 }
 
 void bno08x_register_callback(bno08x_callback_t callback) {
-    imu_callback = callback;  // Store the callback function
-    imu.register_cb(imu_data_handler);  // Register the internal handler in C++
-}
-
-// Get Accelerometer Data
-bno08x_accel_t bno08x_get_accel_data() {
-    bno08x_accel_t accel = {0.0f, 0.0f, 0.0f};
-    if (imu.rpt.linear_accelerometer.has_new_data()) {
-        bno08x_accel_t acceleration = imu.rpt.linear_accelerometer.get();
-        accel.x = acceleration.x;
-        accel.y = acceleration.y;
-        accel.z = acceleration.z;
-    }
-    return accel;
+    user_callback = callback;
+    imu.register_cb(internal_callback_handler);
 }
 
 } // extern "C"
