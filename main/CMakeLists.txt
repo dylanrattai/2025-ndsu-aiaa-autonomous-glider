@@ -1,7 +1,5 @@
 idf_component_register(SRCS 
                             "main.c" 
-                            "gps_wrapper.c" 
-                            "gps_wrapper.h" 
                             "bno08x_wrapper.cpp" 
                             "bno08x_wrapper.h"
                             "../components/esp32_BNO08x/source"  

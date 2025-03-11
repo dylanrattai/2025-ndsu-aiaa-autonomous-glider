@@ -13,15 +13,74 @@
 #include "bno08x_wrapper.h"    // Updated wrapper header
 #include <string.h>
 #include <stdlib.h>
-#include "gps_wrapper.h"
+#include "driver/uart.h"
 
 // PINOUT MAP, etc. (unchanged)
 #define LED_1_GPIO GPIO_NUM_10
 #define LED_2_GPIO GPIO_NUM_11
 #define SERVO_LEFT_GPIO GPIO_NUM_2
 #define SERVO_RIGHT_GPIO GPIO_NUM_4
-#define GPS_RX_PIN 3  // Change to actual pin
-#define GPS_TX_PIN UART_PIN_NO_CHANGE
+#define GPS_UART_NUM UART_NUM_1  // Use UART1 for GPS communication
+#define TX_PIN 18                // GPIO18 (U1TXD)
+#define RX_PIN 17                // GPIO17 (U1RXD)
+#define RTS_PIN UART_PIN_NO_CHANGE
+#define CTS_PIN UART_PIN_NO_CHANGE
+
+/*
+// PINOUT MAP
+// 
+// GPIO 10 - LED - Gray
+// GPIO 11 - LED 2 - Gray
+//
+// GPIO 2 - Left servo - White
+// GPIO 4 - Right servo - Purple
+//
+// IMU, using SPI
+// GPIO 16 - IMU INT - Purple
+// GPIO 15 - IMU reset - Brown
+// GPIO 7 - IMU chip select - Gray
+// GPIO 18 - IMU SCL - Blue
+// GPIO 17 - IMU SDA - Green
+// GPIO 8 - IMU DI - Yellow
+//
+// UART
+// TX - GPS TX - White
+// RX - GPS RX - Yellow
+//
+// ---------------------
+//
+// CORE JOBS
+// Core 0 - Strobe
+// Core 1 - Flightpath algorithm, servo manipuation
+*/
+
+/*
+// BNO085 Euler Info
+//
+// Gyro (degrees)
+// type - bno08x_euler_t
+// x - Roll
+// y - Pitch
+// z - Yaw
+//
+// Gyro Accelerometer (rad/s)
+// type - bno08x_gyro_t
+// x - Roll
+// y - Pitch
+// z - Yaw
+//
+// Linear Accelerometer (m/s^2)
+// type - bno08x_accel_t
+// x - x acceleration
+// y - y acceleration
+// z - z acceleration
+*/
+
+/*
+// TODO:
+// Test IMU connection & output
+// Test GPS
+*/
 
 // Global variables
 bool stop = false;
@@ -44,20 +103,6 @@ void StrobeTask(void *pvParameters)
         gpio_set_level(LED_1_GPIO, 0);
         gpio_set_level(LED_2_GPIO, 0);
         vTaskDelay(1500 / portTICK_PERIOD_MS);
-    }
-}
-
-// GPS task function
-void gps_task(void *pvParameters) {
-    gps_data_t gps_data;
-    while (1) {
-        if (gps_read_data(&gps_data)) {
-            ESP_LOGI(TAG, "Lat: %.6f, Lon: %.6f, Speed: %.2f m/s, Altitude: %.2f m",
-                     gps_data.latitude, gps_data.longitude, gps_data.speed, gps_data.altitude);
-        } else {
-            ESP_LOGW(TAG, "GPS data not available.");
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -148,12 +193,6 @@ void app_main(void)
 
     // Create the IMU task on core 0.
     xTaskCreatePinnedToCore(ImuTask, "IMU Task", 4096, NULL, 8, &imuTask, 0);
+    
 
-    // Initialize and start GPS if available.
-    if (gps_init(UART_NUM_1, GPS_TX_PIN, GPS_RX_PIN) == ESP_OK) {
-        ESP_LOGI(TAG, "GPS initialized successfully!");
-        xTaskCreatePinnedToCore(gps_task, "gps_task", 4096, NULL, 5, NULL, 0);
-    } else {
-        ESP_LOGE(TAG, "Failed to initialize GPS.");
-    }
 }
