@@ -1,30 +1,28 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <esp_err.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdint.h>
 #include "sdkconfig.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/gpio.h"
-#include "driver/i2c_master.h"
-#include <esp_err.h>
-#include "bno08x_wrapper.h"    // Updated wrapper header
-#include <string.h>
-#include <stdlib.h>
 #include "driver/uart.h"
+#include "bno08x_wrapper.h"
 
 // PINOUT MAP, etc. (unchanged)
 #define LED_1_GPIO GPIO_NUM_10
 #define LED_2_GPIO GPIO_NUM_11
 #define SERVO_LEFT_GPIO GPIO_NUM_2
 #define SERVO_RIGHT_GPIO GPIO_NUM_4
-#define GPS_UART_NUM UART_NUM_1  // Use UART1 for GPS communication
-#define TX_PIN 18                // GPIO18 (U1TXD)
-#define RX_PIN 17                // GPIO17 (U1RXD)
-#define RTS_PIN UART_PIN_NO_CHANGE
-#define CTS_PIN UART_PIN_NO_CHANGE
+#define TXD_PIN GPIO_NUM_1
+#define RXD_PIN GPIO_NUM_3
+/*#define TXD_PIN2 GPIO_NUM_17
+#define RXD_PIN2 GPIO_NUM_16*/
 
 /*
 // PINOUT MAP
@@ -84,30 +82,142 @@
 
 // Global variables
 bool stop = false;
-TaskHandle_t strobeTask;
-TaskHandle_t imuTask;
+TaskHandle_t strobeTaskHandle;
+TaskHandle_t imuTaskHandle;
+TaskHandle_t gpsTaskHandle;
 static const char *TAG = "Main";
+QueueHandle_t uart_queue;
+static const int RX_BUFFER_SIZE = 2048;
+SemaphoreHandle_t imuSemaphore = NULL;
+
+typedef struct {
+    char latitude[20];
+    char lat_direction[4];
+    char longitude[20];
+    char lon_direction[4];
+    char altitude[10];
+} gps_data_t;
+
+gps_data_t gpsData;
+
+// UART 0
+void gpsInit(void)
+{
+    const uart_config_t uart_config =
+    {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_APB,
+    };
+
+    uart_driver_install(UART_NUM_0, RX_BUFFER_SIZE * 2, 0, 0, NULL, 0);
+    uart_param_config(UART_NUM_0, &uart_config);
+    uart_set_pin(UART_NUM_0, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+}
+
+static void gpsTask(void *arg)
+{
+    const char *str = "$GPGGA";
+    char *p = NULL;
+    char str1[100];
+    int j = 0;
+
+    char *str2 = (char*)malloc(sizeof(str1));
+    uint8_t* data = (uint8_t*)malloc(RX_BUFFER_SIZE + 1);
+
+    while (1)
+    {
+        const int rxbytes = uart_read_bytes(UART_NUM_0, data, RX_BUFFER_SIZE, 1000 / portTICK_PERIOD_MS);
+
+        if(rxbytes > 0)
+        {
+            p = strstr((const char*)data, str);
+            if(p)
+            {
+                for(int i = 0; p[i] != '\n'; i++)
+                {
+                    str2[j] = p[i];
+                    j++;
+                }
+                str2[j + 1] = '\n';
+                const int len = j + 2;
+                data[rxbytes] = 0;
+
+                // 2 = Lat value
+                // 3 = Lat direction
+                // 4 = Long value
+                // 5 = Long direction
+                // 9 = Altitude
+                // fill out gpsData
+                char *token;
+                int tokenIndex = 0;
+
+                token = strtok(str2, ",");
+                while (token != NULL) {
+                    switch (tokenIndex) {
+                        case 2: // Latitude
+                            strncpy(gpsData.latitude, token, sizeof(gpsData.latitude) - 1);
+                            gpsData.latitude[sizeof(gpsData.latitude) - 1] = '\0';
+                            break;
+                        case 3: // Latitude Direction
+                            strncpy(gpsData.lat_direction, token, sizeof(gpsData.lat_direction) - 1);
+                            gpsData.lat_direction[sizeof(gpsData.lat_direction) - 1] = '\0';
+                            break;
+                        case 4: // Longitude
+                            strncpy(gpsData.longitude, token, sizeof(gpsData.longitude) - 1);
+                            gpsData.longitude[sizeof(gpsData.longitude) - 1] = '\0';
+                            break;
+                        case 5: // Longitude Direction
+                            strncpy(gpsData.lon_direction, token, sizeof(gpsData.lon_direction) - 1);
+                            gpsData.lon_direction[sizeof(gpsData.lon_direction) - 1] = '\0';
+                            break;
+                        case 9: // Altitude
+                            strncpy(gpsData.altitude, token, sizeof(gpsData.altitude) - 1);
+                            gpsData.altitude[sizeof(gpsData.altitude) - 1] = '\0';
+                            break;
+                        default:
+                            break;
+                    }
+                    token = strtok(NULL, ",");
+                    tokenIndex++;
+                }
+            }
+        }
+
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    free(str2);
+    free(data);
+}
 
 // Strobe task function
-void StrobeTask(void *pvParameters)
+void strobeTask(void *pvParameters)
 {
     esp_rom_gpio_pad_select_gpio(LED_1_GPIO);
     gpio_set_direction(LED_1_GPIO, GPIO_MODE_OUTPUT);
     esp_rom_gpio_pad_select_gpio(LED_2_GPIO);
     gpio_set_direction(LED_2_GPIO, GPIO_MODE_OUTPUT);
 
-    while (!stop) {
-        gpio_set_level(LED_1_GPIO, 1);
-        gpio_set_level(LED_2_GPIO, 1);
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-        gpio_set_level(LED_1_GPIO, 0);
-        gpio_set_level(LED_2_GPIO, 0);
-        vTaskDelay(1500 / portTICK_PERIOD_MS);
+    // only strobe while running drone
+    while (1) 
+    {
+        if(!stop)
+        {
+            gpio_set_level(LED_1_GPIO, 1);
+            gpio_set_level(LED_2_GPIO, 1);
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            gpio_set_level(LED_1_GPIO, 0);
+            gpio_set_level(LED_2_GPIO, 0);
+            vTaskDelay(1500 / portTICK_PERIOD_MS);
+        }
     }
 }
 
 // IMU data callback (registered via the wrapper)
-void ImuDataReady(void) {
+void imuDataReady(void) {
     ESP_LOGI("IMU", "New Data Available!");
 
     // Use the C interface types from the wrapper.
@@ -121,60 +231,71 @@ void ImuDataReady(void) {
 }
 
 // IMU task
-void ImuTask(void *pvParameters) {
+void imuTask(void *pvParameters) {
     ESP_LOGI(TAG, "Initializing IMU.");
     if (!bno08x_initialize()) {
         ESP_LOGE(TAG, "IMU Initialization Failed!");
         vTaskDelete(NULL);
     }
-    // Register callback for IMU data
-    bno08x_register_callback(ImuDataReady);
-    // Optionally, add a loop to poll or wait if needed.
+
+    bno08x_register_callback(imuDataReady);
+
     while (1) {
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (xSemaphoreTake(imuSemaphore, portMAX_DELAY) == pdTRUE) {
+            // Read IMU data and process it on demand
+            bno08x_euler_c_t euler = bno08x_get_euler_angles();
+            bno08x_gyro_c_t  gyro  = bno08x_get_gyro_data();
+            bno08x_accel_c_t accel = bno08x_get_accel_data();
+
+            ESP_LOGI("IMU", "Roll: %.2f, Pitch: %.2f, Yaw: %.2f", euler.x, euler.y, euler.z);
+            ESP_LOGI("IMU", "Gyro X: %.2f, Y: %.2f, Z: %.2f", gyro.x, gyro.y, gyro.z);
+            ESP_LOGI("IMU", "Accel X: %.2f, Y: %.2f, Z: %.2f", accel.x, accel.y, accel.z);
+
+            // Flightpath calculation and servo control could be done here.
+        }
     }
 }
 
 // Getters using the wrapper types
-float GetRoll(void) {
+float getRoll(void) {
     bno08x_euler_c_t euler = bno08x_get_euler_angles();
     return euler.x;
 }
-float GetPitch(void) {
+float getPitch(void) {
     bno08x_euler_c_t euler = bno08x_get_euler_angles();
     return euler.y;
 }
-float GetYaw(void) {
+float getYaw(void) {
     bno08x_euler_c_t euler = bno08x_get_euler_angles();
     return euler.z;
 }
 bno08x_euler_c_t GetGyroEuler(void) {
     return bno08x_get_euler_angles();
 }
-float GetGyroRollAccel(void) {
+float getGyroRollAccel(void) {
     bno08x_gyro_c_t gyro = bno08x_get_gyro_data();
     return gyro.x;
 }
-float GetGyroPitchAccel(void) {
+float getGyroPitchAccel(void) {
     bno08x_gyro_c_t gyro = bno08x_get_gyro_data();
     return gyro.y;
 }
-float GetGyroYawAccel(void) {
+float getGyroYawAccel(void) {
     bno08x_gyro_c_t gyro = bno08x_get_gyro_data();
     return gyro.z;
 }
 bno08x_gyro_c_t GetGyroAccelEuler(void) {
     return bno08x_get_gyro_data();
 }
-float GetXAccel(void) {
+float getXAccel(void) {
     bno08x_accel_c_t accel = bno08x_get_accel_data();
     return accel.x;
 }
-float GetYAccel(void) {
+float getYAccel(void) {
     bno08x_accel_c_t accel = bno08x_get_accel_data();
     return accel.y;
 }
-float GetZAccel(void) {
+float getZAccel(void) {
     bno08x_accel_c_t accel = bno08x_get_accel_data();
     return accel.z;  // Corrected: return z, not x.
 }
@@ -187,12 +308,25 @@ void SetServoPositionTask(int position) {
 void app_main(void)
 {
     stop = false;
-    
-    // Create the strobe task on core 1.
-    xTaskCreatePinnedToCore(StrobeTask, "StrobeTask", 1000, NULL, 10, &strobeTask, 1);
 
-    // Create the IMU task on core 0.
-    xTaskCreatePinnedToCore(ImuTask, "IMU Task", 4096, NULL, 8, &imuTask, 0);
-    
+    imuSemaphore = xSemaphoreCreateBinary();
+    if (imuSemaphore == NULL) {
+        ESP_LOGE(TAG, "Failed to create IMU semaphore");
+        return;
+    }
 
+    gpsInit();
+    
+    // Core 1 - Strobe, update GPS
+    xTaskCreatePinnedToCore(strobeTask, "StrobeTask", 1000, NULL, 10, &strobeTaskHandle, 1);
+    xTaskCreatePinnedToCore(gpsTask, "GPS Task", 4096, NULL, 8, &gpsTaskHandle, 1);
+
+    // Core 0 - Update IMU, generate flightpath segment, control flight surfaces
+    xTaskCreatePinnedToCore(imuTask, "IMU Task", 4096, NULL, 8, &imuTaskHandle, 0);
+
+    // flightpath, control surfaces, and imu update loop
+    while (1) {
+        vTaskDelay(50 / portTICK_PERIOD_MS); // every 50ms
+        xSemaphoreGive(imuSemaphore); // update imu data
+    }
 }

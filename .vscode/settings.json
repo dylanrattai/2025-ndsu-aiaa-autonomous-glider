@@ -1,14 +1,17 @@
 {
-    "C_Cpp.intelliSenseEngine": "default",
-    "idf.espIdfPath": "/opt/esp/idf",
-    "idf.pythonInstallPath": "/opt/esp/python_env/idf5.5_py3.12_env/bin/python",
-    "idf.openOcdConfigs": [
-        "board/esp32s3-builtin.cfg"
-    ],
-    "idf.port": "/dev/cu.usbmodem1101",
-    "idf.toolsPath": "/opt/esp",
-    "idf.customExtraVars": {
-        "IDF_TARGET": "esp32s3"
-    },
-    "idf.flashType": "UART"
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.espIdfPath": "/Users/dylan/esp/esp-idf",
+  "idf.pythonInstallPath": "/opt/homebrew/bin/python3",
+  "idf.openOcdConfigs": ["board/esp32s3-builtin.cfg"],
+  "idf.port": "/dev/cu.usbmodem1101",
+  "idf.toolsPath": "/Users/dylan/esp/esp-idf/tools",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  },
+  "idf.flashType": "UART",
+  "files.associations": {
+    "bno08x_wrapper.h": "c",
+    "gpio.h": "c",
+    "freertos.h": "c"
+  }
 }
