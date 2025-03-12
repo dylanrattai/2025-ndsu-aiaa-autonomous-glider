@@ -100,6 +100,44 @@ typedef struct {
 
 gps_data_t gpsData;
 
+/**
+ * return latitutde as + for N and - for S
+*/
+double getLatitude(gps_data_t* data)
+{
+    if (strcmp(data->lat_direction, "N") == 0)
+    {
+        return atof(data->latitude);
+    }
+    else
+    {
+        return -atof(data->latitude);
+    }
+}
+
+/**
+ * return longitude as + for E and - for W
+*/
+double getLongitude(gps_data_t* data)
+{
+    if(strcmp(data->lon_direction, "E") == 0)
+    {
+        return atof(data->longitude);
+    }
+    else
+    {
+        return -atof(data->longitude);
+    }
+}
+
+/**
+ * returns the altitude in MSL estimated by the GPS
+*/
+double getMSLAltitude(gps_data_t* data)
+{
+    return atof(data->altitude);
+}
+
 // UART 0
 void gpsInit(void)
 {
