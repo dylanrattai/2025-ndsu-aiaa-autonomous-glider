@@ -71,8 +71,6 @@
 // Test GPS
 */
 
-// ignore the mismatched snake and camel case, this is my C hello world
-
 // PINOUT MAP, etc. (unchanged)
 #define LED_1_GPIO GPIO_NUM_10
 #define LED_2_GPIO GPIO_NUM_11
@@ -95,16 +93,16 @@ typedef struct {
     double x;
     double y;
     double altitude;
-}
+} waypoint;
 bool stop = false;
-TaskHandle_t strobeTaskHandle;
-TaskHandle_t imuTaskHandle;
-TaskHandle_t gpsTaskHandle;
+TaskHandle_t strobe_task_handle;
+TaskHandle_t imu_task_handle;
+TaskHandle_t gps_task_handle;
 static const char *TAG = "Main";
 QueueHandle_t uart_queue;
 static const int RX_BUFFER_SIZE = 2048;
-SemaphoreHandle_t imuSemaphore = NULL;
-gps_data_t gpsData;
+SemaphoreHandle_t imu_semaphore = NULL;
+gps_data_t gps_data;
 
 /**
  * return latitutde as + for N and - for S
@@ -195,7 +193,7 @@ static void gpsTask(void *arg)
                 // 4 = Long value
                 // 5 = Long direction
                 // 9 = Altitude
-                // fill out gpsData
+                // fill out gps_data
                 char *token;
                 int tokenIndex = 0;
 
@@ -203,24 +201,24 @@ static void gpsTask(void *arg)
                 while (token != NULL) {
                     switch (tokenIndex) {
                         case 2: // Latitude
-                            strncpy(gpsData.latitude, token, sizeof(gpsData.latitude) - 1);
-                            gpsData.latitude[sizeof(gpsData.latitude) - 1] = '\0';
+                            strncpy(gps_data.latitude, token, sizeof(gps_data.latitude) - 1);
+                            gps_data.latitude[sizeof(gps_data.latitude) - 1] = '\0';
                             break;
                         case 3: // Latitude Direction
-                            strncpy(gpsData.lat_direction, token, sizeof(gpsData.lat_direction) - 1);
-                            gpsData.lat_direction[sizeof(gpsData.lat_direction) - 1] = '\0';
+                            strncpy(gps_data.lat_direction, token, sizeof(gps_data.lat_direction) - 1);
+                            gps_data.lat_direction[sizeof(gps_data.lat_direction) - 1] = '\0';
                             break;
                         case 4: // Longitude
-                            strncpy(gpsData.longitude, token, sizeof(gpsData.longitude) - 1);
-                            gpsData.longitude[sizeof(gpsData.longitude) - 1] = '\0';
+                            strncpy(gps_data.longitude, token, sizeof(gps_data.longitude) - 1);
+                            gps_data.longitude[sizeof(gps_data.longitude) - 1] = '\0';
                             break;
                         case 5: // Longitude Direction
-                            strncpy(gpsData.lon_direction, token, sizeof(gpsData.lon_direction) - 1);
-                            gpsData.lon_direction[sizeof(gpsData.lon_direction) - 1] = '\0';
+                            strncpy(gps_data.lon_direction, token, sizeof(gps_data.lon_direction) - 1);
+                            gps_data.lon_direction[sizeof(gps_data.lon_direction) - 1] = '\0';
                             break;
                         case 9: // Altitude
-                            strncpy(gpsData.altitude, token, sizeof(gpsData.altitude) - 1);
-                            gpsData.altitude[sizeof(gpsData.altitude) - 1] = '\0';
+                            strncpy(gps_data.altitude, token, sizeof(gps_data.altitude) - 1);
+                            gps_data.altitude[sizeof(gps_data.altitude) - 1] = '\0';
                             break;
                         default:
                             break;
@@ -290,7 +288,7 @@ void imuTask(void *pvParameters) {
     bno08x_register_callback(imuDataReady);
 
     while (1) {
-        if (xSemaphoreTake(imuSemaphore, portMAX_DELAY) == pdTRUE) {
+        if (xSemaphoreTake(imu_semaphore, portMAX_DELAY) == pdTRUE) {
             // Read IMU data and process it on demand
             bno08x_euler_c_t euler = bno08x_get_euler_angles();
             bno08x_gyro_c_t  gyro  = bno08x_get_gyro_data();
@@ -358,8 +356,8 @@ void app_main(void)
 {
     stop = false;
 
-    imuSemaphore = xSemaphoreCreateBinary();
-    if (imuSemaphore == NULL) {
+    imu_semaphore = xSemaphoreCreateBinary();
+    if (imu_semaphore == NULL) {
         ESP_LOGE(TAG, "Failed to create IMU semaphore");
         return;
     }
@@ -367,15 +365,15 @@ void app_main(void)
     gpsInit();
     
     // Core 1 - Strobe, update GPS
-    xTaskCreatePinnedToCore(strobeTask, "StrobeTask", 1000, NULL, 10, &strobeTaskHandle, 1);
-    xTaskCreatePinnedToCore(gpsTask, "GPS Task", 4096, NULL, 8, &gpsTaskHandle, 1);
+    xTaskCreatePinnedToCore(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle, 1);
+    xTaskCreatePinnedToCore(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle, 1);
 
     // Core 0 - Update IMU, generate flightpath segment, control flight surfaces
-    xTaskCreatePinnedToCore(imuTask, "IMU Task", 4096, NULL, 8, &imuTaskHandle, 0);
+    xTaskCreatePinnedToCore(imuTask, "IMU Task", 4096, NULL, 8, &imu_task_handle, 0);
 
     // flightpath, control surfaces, and imu update loop
     while (1) {
         vTaskDelay(50 / portTICK_PERIOD_MS); // every 50ms
-        xSemaphoreGive(imuSemaphore); // update imu data
+        xSemaphoreGive(imu_semaphore); // update imu data
     }
 }
