@@ -3,6 +3,7 @@
 #include <esp_err.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include <stdint.h>
 #include "sdkconfig.h"
 #include "esp_flash.h"
@@ -13,16 +14,6 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "bno08x_wrapper.h"
-
-// PINOUT MAP, etc. (unchanged)
-#define LED_1_GPIO GPIO_NUM_10
-#define LED_2_GPIO GPIO_NUM_11
-#define SERVO_LEFT_GPIO GPIO_NUM_2
-#define SERVO_RIGHT_GPIO GPIO_NUM_4
-#define TXD_PIN GPIO_NUM_1
-#define RXD_PIN GPIO_NUM_3
-/*#define TXD_PIN2 GPIO_NUM_17
-#define RXD_PIN2 GPIO_NUM_16*/
 
 /*
 // PINOUT MAP
@@ -80,7 +71,31 @@
 // Test GPS
 */
 
+// ignore the mismatched snake and camel case, this is my C hello world
+
+// PINOUT MAP, etc. (unchanged)
+#define LED_1_GPIO GPIO_NUM_10
+#define LED_2_GPIO GPIO_NUM_11
+#define SERVO_LEFT_GPIO GPIO_NUM_2
+#define SERVO_RIGHT_GPIO GPIO_NUM_4
+#define TXD_PIN GPIO_NUM_1
+#define RXD_PIN GPIO_NUM_3
+/*#define TXD_PIN2 GPIO_NUM_17
+#define RXD_PIN2 GPIO_NUM_16*/
+
 // Global variables
+typedef struct {
+    char latitude[20];
+    char lat_direction[4];
+    char longitude[20];
+    char lon_direction[4];
+    char altitude[10];
+} gps_data_t;
+typedef struct {
+    double x;
+    double y;
+    double altitude;
+}
 bool stop = false;
 TaskHandle_t strobeTaskHandle;
 TaskHandle_t imuTaskHandle;
@@ -89,15 +104,6 @@ static const char *TAG = "Main";
 QueueHandle_t uart_queue;
 static const int RX_BUFFER_SIZE = 2048;
 SemaphoreHandle_t imuSemaphore = NULL;
-
-typedef struct {
-    char latitude[20];
-    char lat_direction[4];
-    char longitude[20];
-    char lon_direction[4];
-    char altitude[10];
-} gps_data_t;
-
 gps_data_t gpsData;
 
 /**
@@ -252,6 +258,11 @@ void strobeTask(void *pvParameters)
             vTaskDelay(1500 / portTICK_PERIOD_MS);
         }
     }
+}
+
+void setControlSurfacePosition(double pitch, double roll, double yaw)
+{
+    // TODO
 }
 
 // IMU data callback (registered via the wrapper)
