@@ -15,62 +15,6 @@
 #include "driver/uart.h"
 #include "bno08x_wrapper.h"
 
-/*
-// PINOUT MAP
-// 
-// GPIO 10 - LED - Gray
-// GPIO 11 - LED 2 - Gray
-//
-// GPIO 2 - Left servo - White
-// GPIO 4 - Right servo - Purple
-//
-// IMU, using SPI
-// GPIO 16 - IMU INT - Purple
-// GPIO 15 - IMU reset - Brown
-// GPIO 7 - IMU chip select - Gray
-// GPIO 18 - IMU SCL - Blue
-// GPIO 17 - IMU SDA - Green
-// GPIO 8 - IMU DI - Yellow
-//
-// UART
-// TX - GPS TX - White
-// RX - GPS RX - Yellow
-//
-// ---------------------
-//
-// CORE JOBS
-// Core 0 - Strobe
-// Core 1 - Flightpath algorithm, servo manipuation
-*/
-
-/*
-// BNO085 Euler Info
-//
-// Gyro (degrees)
-// type - bno08x_euler_t
-// x - Roll
-// y - Pitch
-// z - Yaw
-//
-// Gyro Accelerometer (rad/s)
-// type - bno08x_gyro_t
-// x - Roll
-// y - Pitch
-// z - Yaw
-//
-// Linear Accelerometer (m/s^2)
-// type - bno08x_accel_t
-// x - x acceleration
-// y - y acceleration
-// z - z acceleration
-*/
-
-/*
-// TODO:
-// Test IMU connection & output
-// Test GPS
-*/
-
 // PINOUT MAP, etc. (unchanged)
 #define LED_1_GPIO GPIO_NUM_10
 #define LED_2_GPIO GPIO_NUM_11
@@ -78,6 +22,8 @@
 #define SERVO_RIGHT_GPIO GPIO_NUM_4
 #define TXD_PIN GPIO_NUM_1
 #define RXD_PIN GPIO_NUM_3
+#define START_PIN_OUT 0 //tbd
+#define START_PIN_IN 0 //tbd
 /*#define TXD_PIN2 GPIO_NUM_17
 #define RXD_PIN2 GPIO_NUM_16*/
 
@@ -89,20 +35,23 @@ typedef struct {
     char lon_direction[4];
     char altitude[10];
 } gps_data_t;
+
 typedef struct {
     double x;
     double y;
     double altitude;
 } waypoint;
+
 bool stop = false;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
-static const char *TAG = "Main";
+TaskHandle_t autonomous_flight_Task_Handle;
 QueueHandle_t uart_queue;
-static const int RX_BUFFER_SIZE = 2048;
 SemaphoreHandle_t imu_semaphore = NULL;
 gps_data_t gps_data;
+static const char *TAG = "Main";
+static const int RX_BUFFER_SIZE = 2048;
 
 /**
  * return latitutde as + for N and - for S
@@ -160,6 +109,9 @@ void gpsInit(void)
     uart_set_pin(UART_NUM_0, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
+/**
+ * check and update gps_data every 10ms
+*/
 static void gpsTask(void *arg)
 {
     const char *str = "$GPGGA";
@@ -235,7 +187,11 @@ static void gpsTask(void *arg)
     free(data);
 }
 
-// Strobe task function
+/**
+ * Strobe 2 leds in the same pattern as the ones on commercial jets
+ * (Flash, 1.5 sec wait, repeat)
+ * Only run when not connected to mothership
+*/
 void strobeTask(void *pvParameters)
 {
     esp_rom_gpio_pad_select_gpio(LED_1_GPIO);
@@ -352,6 +308,51 @@ void SetServoPositionTask(int position) {
     // Implement servo control here.
 }
 
+waypoint generateWaypoint(gps_data_t* gps_data)
+{
+    // TODO
+    waypoint temp = {0,0,0};
+    return temp;
+}
+
+/**
+ * checks if the starter GPIO pin is giving power
+ * if not, start the autonomous flight
+ * 
+ * start pin is a wire that leaves and comes back to the drone, attached to a hook, 
+ * will get pulled out when the drone is dropped, so the in pin will not be receiving a signal
+*/
+void checkToStartFlight()
+{
+    if(gpio_get_level(START_PIN_IN) == 0)
+    {
+        stop = !stop;
+    }
+}
+
+/**
+ * set the out pin to send a constant signal
+ * wont be received when wire is pulled
+*/
+void sendStartSignal()
+{
+    gpio_set_level(START_PIN_OUT, 1);
+}
+
+/**
+ * run 
+ * - refresh imu
+ * - flightpath generation
+ * - set control surfaces pose
+*/
+void autonomousFlightTask()
+{
+    //Update IMU data
+    xSemaphoreGive(imu_semaphore);
+
+    // TODO
+}
+
 void app_main(void)
 {
     stop = false;
@@ -363,6 +364,7 @@ void app_main(void)
     }
 
     gpsInit();
+    sendStartSignal();
     
     // Core 1 - Strobe, update GPS
     xTaskCreatePinnedToCore(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle, 1);
@@ -370,10 +372,12 @@ void app_main(void)
 
     // Core 0 - Update IMU, generate flightpath segment, control flight surfaces
     xTaskCreatePinnedToCore(imuTask, "IMU Task", 4096, NULL, 8, &imu_task_handle, 0);
+    xTaskCreatePinnedToCore(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 7, &autonomous_flight_Task_Handle, 0);
 
-    // flightpath, control surfaces, and imu update loop
-    while (1) {
-        vTaskDelay(50 / portTICK_PERIOD_MS); // every 50ms
-        xSemaphoreGive(imu_semaphore); // update imu data
+    // every 10ms check to start the plane, stops once started
+    while (stop)
+    {
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+        checkToStartFlight();
     }
 }

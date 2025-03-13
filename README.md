@@ -1,31 +1,57 @@
-# 2025 NDSU Design Build Fly Glider
-## Components used
-- ESP-32 S3
-- AltIMU-10 v6
-- SAM-M10Q GPS breakout board
-- Adafruit PowerBoost 500C
-- 250 mAh LiPo battery
-- 2x lightweight servos
+# PINOUT MAP
 
-## Pin map
-- GPIO 10 - LED
-- GPIO 11 - LED 2
-- GPIO 2 - Left servo
-- GPIO 4 - Right servo
+- GPIO 10 - LED - Gray
+- GPIO 11 - LED 2 - Gray
 
-### I2C (IMU)
-- GPIO 8 - SDA IMU
-- GPIO 9 - SCL IMU
+- GPIO 2 - Left servo - White
+- GPIO 4 - Right servo - Purple
 
-### UART (GPS)
-- TX - GPS TX
-- RX - GPS RX
+## IMU, using SPI
 
-## Core jobs
-### Core 0
-- Strobe
+- GPIO 16 - IMU INT - Purple
+- GPIO 15 - IMU reset - Brown
+- GPIO 7 - IMU chip select - Gray
+- GPIO 18 - IMU SCL - Blue
+- GPIO 17 - IMU SDA - Green
+- GPIO 8 - IMU DI - Yellow
 
-### Core 1
-- Data interpretation
-- Flight path algorithm
-- Flight surface manipulation
+## GPS, using UART
+
+- TX - GPS TX - White
+- RX - GPS RX - Yellow
+
+# CORE JOBS
+
+- Core 0 - Strobe
+- Core 1 - Flightpath algorithm, servo manipuation
+
+# BNO085 Euler Info
+
+## Gyro (degrees)
+
+- type - bno08x_euler_t
+- x - Roll
+- y - Pitch
+- z - Yaw
+
+## Gyro Accelerometer (rad/s)
+
+- type - bno08x_gyro_t
+- x - Roll
+- y - Pitch
+- z - Yaw
+
+## Linear Accelerometer (m/s^2)
+
+- type - bno08x_accel_t
+- x - x acceleration
+- y - y acceleration
+- z - z acceleration
+
+# TODO:
+
+- Test IMU connection & output
+- Test GPS
+- Test flightpath generation
+- Test control surface manipulation
+- Test start cmd
