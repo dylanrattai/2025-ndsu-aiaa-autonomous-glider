@@ -55,3 +55,4 @@
 - Test flightpath generation
 - Test control surface manipulation
 - Test start cmd
+- Test heading estimator is accurate

@@ -42,53 +42,68 @@ typedef struct {
     double altitude;
 } waypoint;
 
-bool stop = false;
+bool stop = true;
+bool led_stop = true;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
 TaskHandle_t autonomous_flight_Task_Handle;
 QueueHandle_t uart_queue;
 SemaphoreHandle_t imu_semaphore = NULL;
+SemaphoreHandle_t gps_semaphore = NULL;
 gps_data_t gps_data;
+gps_data_t* p_gps_data = &gps_data;
 static const char *TAG = "Main";
 static const int RX_BUFFER_SIZE = 2048;
+static const double PI = 3.1415926535;
+const double AUTONOMOUS_START_DELAY = 1500; // 1.5 seconds before auto flight starts. time to seperate from mothership
+const double ORBIT_RADIUS = 50;
+const double COMP_ORBIT_PT_LAT = 32.26558491693584; // copied from google maps (100ft northeast of runway)
+const double COMP_ORBIT_PT_LONG = -111.27351705189541; // copied from google maps
+const double COMP_MSL_GROUND = 2188.3;
+const double ORBIT_PT_LAT = 0;
+const double ORBIT_PT_LONG = 0;
+
+double degrees_to_radians(double degrees) {
+    return degrees * PI / 180.0;
+}
 
 /**
  * return latitutde as + for N and - for S
 */
-double getLatitude(gps_data_t* data)
+double getLatitude()
 {
-    if (strcmp(data->lat_direction, "N") == 0)
+    if (strcmp(p_gps_data->lat_direction, "N") == 0)
     {
-        return atof(data->latitude);
+        return atof(p_gps_data->latitude);
     }
     else
     {
-        return -atof(data->latitude);
+        return -atof(p_gps_data->latitude);
     }
 }
 
 /**
  * return longitude as + for E and - for W
 */
-double getLongitude(gps_data_t* data)
+double getLongitude()
 {
-    if(strcmp(data->lon_direction, "E") == 0)
+    if(strcmp(p_gps_data->lon_direction, "E") == 0)
     {
-        return atof(data->longitude);
+        return atof(p_gps_data->longitude);
     }
     else
     {
-        return -atof(data->longitude);
+        return -atof(p_gps_data->longitude);
     }
 }
 
 /**
  * returns the altitude in MSL estimated by the GPS
 */
-double getMSLAltitude(gps_data_t* data)
+double getMSLAltitude()
 {
-    return atof(data->altitude);
+    return atof(p_gps_data->altitude);
 }
 
 // UART 0
@@ -124,64 +139,67 @@ static void gpsTask(void *arg)
 
     while (1)
     {
-        const int rxbytes = uart_read_bytes(UART_NUM_0, data, RX_BUFFER_SIZE, 1000 / portTICK_PERIOD_MS);
+        if (xSemaphoreTake(gps_semaphore, portMAX_DELAY) == pdTRUE) {
 
-        if(rxbytes > 0)
-        {
-            p = strstr((const char*)data, str);
-            if(p)
+            const int rxbytes = uart_read_bytes(UART_NUM_0, data, RX_BUFFER_SIZE, 1000 / portTICK_PERIOD_MS);
+
+            if(rxbytes > 0)
             {
-                for(int i = 0; p[i] != '\n'; i++)
+                p = strstr((const char*)data, str);
+                if(p)
                 {
-                    str2[j] = p[i];
-                    j++;
-                }
-                str2[j + 1] = '\n';
-                const int len = j + 2;
-                data[rxbytes] = 0;
-
-                // 2 = Lat value
-                // 3 = Lat direction
-                // 4 = Long value
-                // 5 = Long direction
-                // 9 = Altitude
-                // fill out gps_data
-                char *token;
-                int tokenIndex = 0;
-
-                token = strtok(str2, ",");
-                while (token != NULL) {
-                    switch (tokenIndex) {
-                        case 2: // Latitude
-                            strncpy(gps_data.latitude, token, sizeof(gps_data.latitude) - 1);
-                            gps_data.latitude[sizeof(gps_data.latitude) - 1] = '\0';
-                            break;
-                        case 3: // Latitude Direction
-                            strncpy(gps_data.lat_direction, token, sizeof(gps_data.lat_direction) - 1);
-                            gps_data.lat_direction[sizeof(gps_data.lat_direction) - 1] = '\0';
-                            break;
-                        case 4: // Longitude
-                            strncpy(gps_data.longitude, token, sizeof(gps_data.longitude) - 1);
-                            gps_data.longitude[sizeof(gps_data.longitude) - 1] = '\0';
-                            break;
-                        case 5: // Longitude Direction
-                            strncpy(gps_data.lon_direction, token, sizeof(gps_data.lon_direction) - 1);
-                            gps_data.lon_direction[sizeof(gps_data.lon_direction) - 1] = '\0';
-                            break;
-                        case 9: // Altitude
-                            strncpy(gps_data.altitude, token, sizeof(gps_data.altitude) - 1);
-                            gps_data.altitude[sizeof(gps_data.altitude) - 1] = '\0';
-                            break;
-                        default:
-                            break;
+                    for(int i = 0; p[i] != '\n'; i++)
+                    {
+                        str2[j] = p[i];
+                        j++;
                     }
-                    token = strtok(NULL, ",");
-                    tokenIndex++;
+                    str2[j + 1] = '\n';
+                    const int len = j + 2;
+                    data[rxbytes] = 0;
+
+                    // 2 = Lat value
+                    // 3 = Lat direction
+                    // 4 = Long value
+                    // 5 = Long direction
+                    // 9 = Altitude
+                    // fill out gps_data
+                    char *token;
+                    int tokenIndex = 0;
+
+                    token = strtok(str2, ",");
+                    while (token != NULL) {
+                        switch (tokenIndex) {
+                            case 2: // Latitude
+                                strncpy(gps_data.latitude, token, sizeof(gps_data.latitude) - 1);
+                                gps_data.latitude[sizeof(gps_data.latitude) - 1] = '\0';
+                                break;
+                            case 3: // Latitude Direction
+                                strncpy(gps_data.lat_direction, token, sizeof(gps_data.lat_direction) - 1);
+                                gps_data.lat_direction[sizeof(gps_data.lat_direction) - 1] = '\0';
+                                break;
+                            case 4: // Longitude
+                                strncpy(gps_data.longitude, token, sizeof(gps_data.longitude) - 1);
+                                gps_data.longitude[sizeof(gps_data.longitude) - 1] = '\0';
+                                break;
+                            case 5: // Longitude Direction
+                                strncpy(gps_data.lon_direction, token, sizeof(gps_data.lon_direction) - 1);
+                                gps_data.lon_direction[sizeof(gps_data.lon_direction) - 1] = '\0';
+                                break;
+                            case 9: // Altitude
+                                strncpy(gps_data.altitude, token, sizeof(gps_data.altitude) - 1);
+                                gps_data.altitude[sizeof(gps_data.altitude) - 1] = '\0';
+                                break;
+                            default:
+                                break;
+                        }
+                        token = strtok(NULL, ",");
+                        tokenIndex++;
+                    }
                 }
             }
+            // tell calling function, imu update is done
+            xTaskNotifyGive(autonomous_flight_Task_Handle);
         }
-
-        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
     free(str2);
     free(data);
@@ -254,7 +272,8 @@ void imuTask(void *pvParameters) {
             ESP_LOGI("IMU", "Gyro X: %.2f, Y: %.2f, Z: %.2f", gyro.x, gyro.y, gyro.z);
             ESP_LOGI("IMU", "Accel X: %.2f, Y: %.2f, Z: %.2f", accel.x, accel.y, accel.z);
 
-            // Flightpath calculation and servo control could be done here.
+            // tell calling function, imu update is done
+            xTaskNotifyGive(autonomous_flight_Task_Handle);
         }
     }
 }
@@ -268,7 +287,7 @@ float getPitch(void) {
     bno08x_euler_c_t euler = bno08x_get_euler_angles();
     return euler.y;
 }
-float getYaw(void) {
+float getYaw(void) { // also our heading
     bno08x_euler_c_t euler = bno08x_get_euler_angles();
     return euler.z;
 }
@@ -322,10 +341,17 @@ waypoint generateWaypoint(gps_data_t* gps_data)
  * start pin is a wire that leaves and comes back to the drone, attached to a hook, 
  * will get pulled out when the drone is dropped, so the in pin will not be receiving a signal
 */
-void checkToStartFlight()
+void checkToStartFlight(void)
 {
-    if(gpio_get_level(START_PIN_IN) == 0)
+    /**
+     * start LEDs right away, delay to auto flight for seperation from mothership.
+    */
+    if(gpio_get_level(START_PIN_IN) != 1)
     {
+        led_stop = !led_stop;
+
+        vTaskDelay(AUTONOMOUS_START_DELAY / portTICK_PERIOD_MS);
+
         stop = !stop;
     }
 }
@@ -334,7 +360,7 @@ void checkToStartFlight()
  * set the out pin to send a constant signal
  * wont be received when wire is pulled
 */
-void sendStartSignal()
+void sendStartSignal(void)
 {
     gpio_set_level(START_PIN_OUT, 1);
 }
@@ -344,35 +370,74 @@ void sendStartSignal()
  * - refresh imu
  * - flightpath generation
  * - set control surfaces pose
+ * 
+ * 
+ * 
+ * stage 1 - enter orbit
+ * Archimedean spiral
+ * formula: r(theta) = distanceFromOrbitCenter * e ^ {-theta / (2 * pi)}
+ * 
+ * when near orbit radius, go to stage 2
+ * 
+ * stage 2 - orbit
+ * circle with a radius of 50'
+ * r(theta) = 50
+ * 
+ * when near ground, go to stage 3, even if in stage 1 rn
+ * 
+ * stage 3 - landing
+ * straight line going east or west only, slow descent rate
 */
-void autonomousFlightTask()
+void autonomousFlightTask(void)
 {
-    //Update IMU data
-    xSemaphoreGive(imu_semaphore);
+    while (1)
+    {
+        if (!stop)
+        {
+            //Update GPS data
+            xSemaphoreGive(gps_semaphore);
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    // TODO
+            //Update IMU data
+            xSemaphoreGive(imu_semaphore);
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+            // TODO: flightpath logic
+        }
+    }
 }
 
 void app_main(void)
 {
-    stop = false;
-
+    // create imu semaphore
     imu_semaphore = xSemaphoreCreateBinary();
     if (imu_semaphore == NULL) {
         ESP_LOGE(TAG, "Failed to create IMU semaphore");
+        return;
+    }
+    // create gps semaphore
+    gps_semaphore = xSemaphoreCreateBinary();
+    if (gps_semaphore == NULL) {
+        ESP_LOGE(TAG, "Failed to create GPS semaphore");
         return;
     }
 
     gpsInit();
     sendStartSignal();
     
-    // Core 1 - Strobe, update GPS
+    /**
+     * Core 1 - Strobe
+     * 
+     * so strobe doesnt interrupt anything else
+    */
     xTaskCreatePinnedToCore(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle, 1);
-    xTaskCreatePinnedToCore(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle, 1);
 
-    // Core 0 - Update IMU, generate flightpath segment, control flight surfaces
+    /**
+     * run everything else on core 0
+    */
     xTaskCreatePinnedToCore(imuTask, "IMU Task", 4096, NULL, 8, &imu_task_handle, 0);
-    xTaskCreatePinnedToCore(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 7, &autonomous_flight_Task_Handle, 0);
+    xTaskCreatePinnedToCore(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle, 0);
+    xTaskCreatePinnedToCore(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_Task_Handle, 0);
 
     // every 10ms check to start the plane, stops once started
     while (stop)
