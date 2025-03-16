@@ -44,6 +44,7 @@ typedef struct {
 
 bool stop = true;
 bool led_stop = true;
+double start_drop_distance = 250;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
@@ -335,6 +336,34 @@ waypoint generateWaypoint(gps_data_t* gps_data)
 }
 
 /**
+ * calc distance using haverisne formula
+ * 
+ * 1 is current
+ * 2 is orbit pt
+*/
+double distanceFromOrbitPoint()
+{
+    double earth_radius_meters = 6378137;
+    double meters_to_ft = 3.28084;
+    double current_lat = getLatitude();
+    double current_long = getLongitude();
+    double lat_1_radians = current_lat * PI / 180;
+    double lat_2_radians = ORBIT_PT_LAT * PI / 180;
+    double long_1_radians = current_long * PI / 180;
+    double long_2_radians = ORBIT_PT_LONG * PI / 180;
+    double delta_lat = (lat_2_radians - lat_1_radians);
+    double delta_long = (long_2_radians - long_1_radians);
+
+    double a = sin(delta_lat / 2) * sin(delta_lat / 2) + 
+               cos(lat_1_radians) * cos(lat_2_radians) *
+               sin(delta_long / 2) * sin(delta_long / 2);
+    
+    double b = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+    return b * earth_radius_meters * meters_to_ft;
+}
+
+/**
  * checks if the starter GPIO pin is giving power
  * if not, start the autonomous flight
  * 
@@ -352,7 +381,10 @@ void checkToStartFlight(void)
 
         vTaskDelay(AUTONOMOUS_START_DELAY / portTICK_PERIOD_MS);
 
+        // start autonomous flight
         stop = !stop;
+        // set start drop distance var for flightpath spiral formula
+        start_drop_distance = distanceFromOrbitPoint(); 
     }
 }
 
