@@ -59,4 +59,8 @@
 - Test GPS
 - Test flightpath generation
 - Test control surface manipulation
-- Test start cmd
+
+# Verified working
+
+- Strobe
+- Startup

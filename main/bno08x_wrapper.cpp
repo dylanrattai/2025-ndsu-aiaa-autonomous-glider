@@ -1,106 +1,240 @@
-// Optional fallback definitions for configuration macros.
-// In production, these should come from your project's Kconfig/sdkconfig.
-#ifndef CONFIG_ESP32_BNO08X_SPI_HOST
-#define CONFIG_ESP32_BNO08X_SPI_HOST 1
-#endif
-#ifndef CONFIG_ESP32_BNO08X_GPIO_DI
-#define CONFIG_ESP32_BNO08X_GPIO_DI 23
-#endif
-#ifndef CONFIG_ESP32_BNO08X_GPIO_SDA
-#define CONFIG_ESP32_BNO08X_GPIO_SDA 19
-#endif
-#ifndef CONFIG_ESP32_BNO08X_GPIO_SCL
-#define CONFIG_ESP32_BNO08X_GPIO_SCL 18
-#endif
-#ifndef CONFIG_ESP32_BNO08X_GPIO_CS
-#define CONFIG_ESP32_BNO08X_GPIO_CS 33
-#endif
-#ifndef CONFIG_ESP32_BNO08X_GPIO_HINT
-#define CONFIG_ESP32_BNO08X_GPIO_HINT 26
-#endif
-#ifndef CONFIG_ESP32_BNO08X_GPIO_RST
-#define CONFIG_ESP32_BNO08X_GPIO_RST 32
-#endif
-#ifndef CONFIG_ESP32_BNO08X_SCL_SPEED_HZ
-#define CONFIG_ESP32_BNO08X_SCL_SPEED_HZ 2000000
-#endif
-// (Define any other missing macros as needed.)
-
 #include "BNO08x.hpp"
-#include "bno08x_wrapper.h"
 #include "esp_log.h"
 
-// Tag for ESP logging
-static const char *TAG = "BNO08x_C_Wrapper";
-
-// Create a static instance of the C++ IMU object.
 static BNO08x imu;
 
-// Store the user callback (if any)
-static bno08x_callback_t user_callback = NULL;
-
-// Internal callback function that the C++ library will invoke.
-static void internal_callback_handler() {
-    if (user_callback) {
-        user_callback();
-    }
-}
-
 extern "C" {
+    #define TAG "BNO08x_WRAPPER"
 
-bool bno08x_initialize(void) {
-    if (!imu.initialize()) {
-        ESP_LOGE(TAG, "IMU Initialization Failed");
-        return false;
+    int bno08xInit(void)
+    {
+        if(!imu.initialize())
+        {
+            ESP_LOGE(TAG, "Failed to init IMU.");
+            return 1;
+        }
+
+        // enable game rotation vector and calibrated gyro reports
+        imu.rpt.rv_game.enable(100000UL);  // 100,000us == 100ms report interval
+        imu.rpt.cal_gyro.enable(100000UL); // 100,000us == 100ms report interval
+
+        return 0;
     }
-    // Enable various sensor reports (using 100,000 microseconds = 100ms interval)
-    imu.rpt.rv_game.enable(100000UL);
-    imu.rpt.cal_gyro.enable(100000UL);
-    imu.rpt.linear_accelerometer.enable(100000UL);
-    return true;
-}
 
-bool bno08x_data_available(void) {
-    return imu.data_available();
-}
+    /**
+     * Fetches and returns the roll (y) of the imu;
+     * Returns -1000 if no data available, logs if had no new data;
+     * 
+     * +- 180 degrees
+    */
+    double getRoll(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
 
-bno08x_euler_c_t bno08x_get_euler_angles(void) {
-    bno08x_euler_c_t result = {0.0f, 0.0f, 0.0f};
-    if (imu.rpt.rv_game.has_new_data()) {
-        // The library returns a C++ type (e.g., bno08x_euler_angle_t) from get_euler()
-        auto angles = imu.rpt.rv_game.get_euler();
-        result.x = angles.x;
-        result.y = angles.y;
-        result.z = angles.z;
+        if(!imu.rpt.rv_game.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale roll data.");
+        }
+
+        bno08x_euler_angle_t e = imu.rpt.rv_game.get_euler();
+        return e.y;
     }
-    return result;
-}
 
-bno08x_gyro_c_t bno08x_get_gyro_data(void) {
-    bno08x_gyro_c_t result = {0.0f, 0.0f, 0.0f};
-    if (imu.rpt.cal_gyro.has_new_data()) {
-        auto gyro = imu.rpt.cal_gyro.get();
-        result.x = gyro.x;
-        result.y = gyro.y;
-        result.z = gyro.z;
+    /**
+     * Fetches and returns the pitch (x) of the imu;
+     * Returns -1000 if no data available, logs if had no new data;
+     * 
+     * +- 180 degrees
+    */
+    double getPitch(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
+
+        if(!imu.rpt.rv_game.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale pitch data.");
+        }
+
+        bno08x_euler_angle_t e = imu.rpt.rv_game.get_euler();
+        return e.x;
     }
-    return result;
-}
 
-bno08x_accel_c_t bno08x_get_accel_data(void) {
-    bno08x_accel_c_t result = {0.0f, 0.0f, 0.0f};
-    if (imu.rpt.linear_accelerometer.has_new_data()) {
-        auto accel = imu.rpt.linear_accelerometer.get();
-        result.x = accel.x;
-        result.y = accel.y;
-        result.z = accel.z;
+    /**
+     * Fetches and returns the yaw (z) of the imu;
+     * Returns -1000 if no data available, logs if had no new data;
+     * 
+     * +- 180 degrees
+    */
+    double getYaw(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
+
+        if(!imu.rpt.rv_game.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale pitch data.");
+        }
+
+        bno08x_euler_angle_t e = imu.rpt.rv_game.get_euler();
+        return e.z;
     }
-    return result;
-}
 
-void bno08x_register_callback(bno08x_callback_t callback) {
-    user_callback = callback;
-    imu.register_cb(internal_callback_handler);
-}
+    /**
+     * Returns the roll acceleration of the imu in rad/s.
+     * Returns -1000 if no data available, logs if had no new data;
+    */
+    double getRollAccel(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
 
-} // extern "C"
+        if(!imu.rpt.cal_gyro.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale gyro data: roll");
+        }
+        
+        bno08x_gyro_t g = imu.rpt.cal_gyro.get();
+        return g.y;
+    }
+
+    /**
+     * Returns the pitch acceleration of the imu in rad/s.
+     * Returns -1000 if no data available, logs if had no new data;
+    */
+    double getPitchAccel(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
+
+        if(!imu.rpt.cal_gyro.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale gyro data: pitch");
+        }
+        
+        bno08x_gyro_t g = imu.rpt.cal_gyro.get();
+        return g.x;
+    }
+
+    /**
+     * Returns the yaw acceleration of the imu in rad/s.
+     * Returns -1000 if no data available, logs if had no new data;
+    */
+    double getYawAccel(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
+
+        if(!imu.rpt.cal_gyro.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale gyro data: roll");
+        }
+        
+        bno08x_gyro_t g = imu.rpt.cal_gyro.get();
+        return g.z;
+    }
+
+    /**
+     * Returns the linear y (forwards backwards) acceleration of the IMU in m/s^2.
+     * Returns -1000 if no data available, logs if had no new data;
+    */
+    double getYAccel(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
+
+        if(!imu.rpt.linear_accelerometer.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale linear acceleration: y.");
+        }
+
+        bno08x_accel_t a = imu.rpt.linear_accelerometer.get();
+        return a.y;
+    }
+
+    /**
+     * Returns the linear z (up down) acceleration of the IMU in m/s^2.
+     * Returns -1000 if no data available, logs if had no new data;
+    */
+    double getZAccel(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
+
+        if(!imu.rpt.linear_accelerometer.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale linear acceleration: z.");
+        }
+
+        bno08x_accel_t a = imu.rpt.linear_accelerometer.get();
+        return a.z;
+    }
+
+    /**
+     * Returns the linear x (left right) acceleration of the IMU in m/s^2.
+     * Returns -1000 if no data available, logs if had no new data;
+    */
+    double getXAccel(void)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1000;
+        }
+
+        if(!imu.rpt.linear_accelerometer.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale linear acceleration: x.");
+        }
+
+        bno08x_accel_t a = imu.rpt.linear_accelerometer.get();
+        return a.x;
+    }
+
+
+    int getMagnometer(float* mx, float* my, float* mz)
+    {
+        if(!imu.data_available())
+        {
+            ESP_LOGE(TAG, "No IMU data available.");
+            return -1;
+        }
+
+        if(!imu.rpt.cal_magnetometer.has_new_data())
+        {
+            ESP_LOGW(TAG, "IMU fetching stale magnometer data.");
+        }
+
+        bno08x_magf_t m = imu.rpt.cal_magnetometer.get();
+        *mx = m.x;
+        *my = m.y;
+        *mz = m.z;
+
+        return 0;
+    }
+}

@@ -38,18 +38,19 @@ typedef struct {
 
 bool stop = true;
 bool led_stop = true;
+bool imu_init = false;
+bool gps_init = false;
 double start_drop_distance = 250;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
-TaskHandle_t autonomous_flight_Task_Handle;
-QueueHandle_t uart_queue;
+TaskHandle_t autonomous_flight_task_gandle;
+TaskHandle_t backup_flight_task_handle;
 SemaphoreHandle_t imu_semaphore = NULL;
 SemaphoreHandle_t gps_semaphore = NULL;
 gps_data_t gps_data;
 gps_data_t* p_gps_data = &gps_data;
 const char *TAG = "Main";
-const int RX_BUFFER_SIZE = 2048;
 const double PI = 3.1415926535;
 const double AUTONOMOUS_START_DELAY = 1500; // 1.5 seconds before auto flight starts. time to seperate from mothership
 const double ORBIT_RADIUS = 50;
@@ -118,15 +119,20 @@ void strobeTask(void *pvParameters)
     // only strobe while running drone
     while (1) 
     {
-        if(!stop)
+        if(!led_stop)
         {
             gpio_set_level(LED_1_GPIO, 1);
             gpio_set_level(LED_2_GPIO, 1);
             vTaskDelay(100 / portTICK_PERIOD_MS);
+
             gpio_set_level(LED_1_GPIO, 0);
             gpio_set_level(LED_2_GPIO, 0);
+            vTaskDelay(1500 / portTICK_PERIOD_MS);
         }
-        vTaskDelay(1500 / portTICK_PERIOD_MS);
+        else
+        {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
     }
 }
 
@@ -169,6 +175,21 @@ double distanceFromOrbitPoint()
 }
 
 /**
+ * Setup GPIO pins, then,
+ * Set the out pin to send a constant signal.
+ * Wont be received when wire is pulled.
+*/
+void sendStartSignal(void)
+{
+    esp_rom_gpio_pad_select_gpio(START_PIN_IN);
+    gpio_set_direction(START_PIN_IN, GPIO_MODE_INPUT);
+    esp_rom_gpio_pad_select_gpio(START_PIN_OUT);
+    gpio_set_direction(START_PIN_OUT, GPIO_MODE_OUTPUT);
+
+    gpio_set_level(START_PIN_OUT, 1);
+}
+
+/**
  * checks if the starter GPIO pin is giving power
  * if not, start the autonomous flight
  * 
@@ -195,19 +216,9 @@ void checkToStartFlight(void)
     }
 }
 
-/**
- * Setup GPIO pins, then,
- * Set the out pin to send a constant signal.
- * Wont be received when wire is pulled.
-*/
-void sendStartSignal(void)
+void imuTask(void)
 {
-    esp_rom_gpio_pad_select_gpio(START_PIN_IN);
-    gpio_set_direction(START_PIN_IN, GPIO_MODE_INPUT);
-    esp_rom_gpio_pad_select_gpio(START_PIN_OUT);
-    gpio_set_direction(START_PIN_OUT, GPIO_MODE_OUTPUT);
 
-    gpio_set_level(START_PIN_OUT, 1);
 }
 
 /**
@@ -258,36 +269,56 @@ void autonomousFlightTask(void *pvParameters)
     }
 }
 
+/**
+ * backup incase GPS or IMU doesnt init
+ * 
+ * one program for imu based only, and one for neither
+ * 
+ * ----- IMU only -----
+ * run an orbit just based off imu
+ * 
+ * ----- None -----
+ * hold servos in a certain pose
+*/
+void backupFlightTask(void *pvParameters)
+{
+
+}
+
 void app_main(void)
 {
-    // create imu semaphore
+    /**
+     * ----- CREATE SEMAPHORES -----
+    */
     imu_semaphore = xSemaphoreCreateBinary();
     if (imu_semaphore == NULL) {
         ESP_LOGE(TAG, "Failed to create IMU semaphore");
         return;
     }
-    // create gps semaphore
     gps_semaphore = xSemaphoreCreateBinary();
     if (gps_semaphore == NULL) {
         ESP_LOGE(TAG, "Failed to create GPS semaphore");
         return;
     }
 
-    sendStartSignal();
-    
     /**
-     * Core 1 - Strobe
-     * 
-     * so strobe doesnt interrupt anything else
+     * ----- INITILIZE THINGS -----
     */
-    xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
+    if(bno08xInit() != 0)
+    {
+        ESP_LOGE(TAG, "Failed to init IMU.");
+    }
+    // 
+    sendStartSignal();
 
     /**
-     * run everything else on core 0
+     * ----- CREATE TASKS -----
     */
-    //xTaskCreatePinnedToCore(imuTask, "IMU Task", 4096, NULL, 8, &imu_task_handle, 0);
-    //xTaskCreatePinnedToCore(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle, 0);
-    //xTaskCreate(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_Task_Handle);
+    xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
+    //xTaskCreate(imuTask, "IMU Task", 4096, NULL, 8, &imu_task_handle);
+    //xTaskCreate(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle);
+    //xTaskCreate(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_task_handle);
+    //xTaskCreate(backupFlightTask, "Backup Flight Task", 4096, NULL, 5, &backup_flight_task_handle);
 
     // every 10ms check to start the plane, stops once started
     while (stop)
