@@ -10,7 +10,7 @@
 
 - GPIO 16 - IMU INT - Purple
 - GPIO 15 - IMU reset - Brown
-- GPIO 7 - IMU chip select - Gray
+- GPIO 7 - IMU chip select - Silver
 - GPIO 18 - IMU SCL - Blue
 - GPIO 17 - IMU SDA - Green
 - GPIO 8 - IMU DI - Yellow
@@ -19,6 +19,11 @@
 
 - TX - GPS TX - White
 - RX - GPS RX - Yellow
+
+## Starter wire
+
+- GPIO 45 - Yellow with green stripe
+- GPIO 39 - Yellow with green stripe
 
 # CORE JOBS
 
