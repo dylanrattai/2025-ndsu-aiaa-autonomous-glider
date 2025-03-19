@@ -17,8 +17,7 @@ extern "C" {
         // enable game rotation vector and calibrated gyro reports
         imu.rpt.rv_game.enable(100000UL);  // 100,000us == 100ms report interval
         imu.rpt.cal_gyro.enable(100000UL); // 100,000us == 100ms report interval
-        imu.rpt.linear_accelerometer.enable(100000UL);
-        
+
         return 0;
     }
 
