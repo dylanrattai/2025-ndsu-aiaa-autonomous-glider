@@ -13,7 +13,6 @@ idf_component_register(SRCS
                             "../components/esp32_BNO08x/include/report" 
                             "../components/esp32_BNO08x/include/callback" 
                             "../components/esp32_BNO08x/SH2" 
-                            "../etl/include"
                        REQUIRES 
                             driver 
                             esp_timer 
