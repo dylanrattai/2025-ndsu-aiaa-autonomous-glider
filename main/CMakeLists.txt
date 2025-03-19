@@ -5,6 +5,7 @@ idf_component_register(SRCS
                             "../components/esp32_BNO08x/source"  
                             "../components/esp32_BNO08x/source/report" 
                             "../components/esp32_BNO08x/SH2"
+                            "test.c"
                        PRIV_REQUIRES 
                             spi_flash
                        INCLUDE_DIRS 

@@ -14,6 +14,7 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "bno08x_wrapper.h"
+#include "test.c"
 
 // PINOUT MAP, etc. (unchanged)
 #define LED_1_GPIO GPIO_NUM_10
@@ -40,6 +41,15 @@ bool stop = true;
 bool led_stop = true;
 bool imu_init = false;
 bool gps_init = false;
+double roll;
+double pitch;
+double yaw;
+double roll_accel;
+double pitch_accel;
+double yaw_accel;
+double x_accel;
+double y_accel;
+double z_accel;
 double start_drop_distance = 250;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t gps_task_handle;
@@ -48,7 +58,7 @@ TaskHandle_t backup_flight_task_handle;
 SemaphoreHandle_t gps_semaphore = NULL;
 gps_data_t gps_data;
 gps_data_t* p_gps_data = &gps_data;
-const char *TAG = "Main";
+const char *TAG = "MAIN";
 const double PI = 3.1415926535;
 const double AUTONOMOUS_START_DELAY = 1500; // 1.5 seconds before auto flight starts. time to seperate from mothership
 const double ORBIT_RADIUS = 50;
@@ -201,7 +211,7 @@ void checkToStartFlight(void)
     */
     if(gpio_get_level(START_PIN_IN) != 1)
     {
-        ESP_LOGE(TAG, "---------- Starting autonomous flight. ----------");
+        ESP_LOGI(TAG, "---------- Starting autonomous flight. ----------");
 
         led_stop = !led_stop;
 
@@ -247,14 +257,21 @@ void autonomousFlightTask(void *pvParameters)
             xSemaphoreGive(gps_semaphore);
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-            // TODO: flightpath logic
+            // update imu data
+            roll = getRoll();
+            pitch = getPitch();
+            yaw = getYaw();
+            roll_accel = getRollAccel();
+            pitch_accel = getPitchAccel();
+            yaw_accel = getYawAccel();
+            y_accel = getYAccel();
+            x_accel = getXAccel();
+            z_accel = getZAccel();
 
-            ESP_LOGE(TAG, "!stop");
+            // TODO: flightpath logic
         }
 
         vTaskDelay(50 / portTICK_PERIOD_MS);
-
-        ESP_LOGE(TAG, "Test");
     }
 }
 
@@ -298,7 +315,8 @@ void app_main(void)
     /**
      * ----- CREATE TASKS -----
     */
-    xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
+    //xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
+    xTaskCreate(strobeTask, "StrobeTask", 4096, NULL, 10, &strobe_task_handle);
     //xTaskCreate(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle);
     //xTaskCreate(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_task_handle);
     //xTaskCreate(backupFlightTask, "Backup Flight Task", 4096, NULL, 5, &backup_flight_task_handle);
