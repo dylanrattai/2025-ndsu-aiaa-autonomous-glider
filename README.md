@@ -14,8 +14,6 @@
 - GPIO 18 - IMU SCL - Blue
 - GPIO 17 - IMU SDA - Green
 - GPIO 8 - IMU DI - Yellow
-- PS0 solder jumper pad - Soldered
-- PS1 solder jumper pad - Soldered
 
 ## GPS, using UART
 
@@ -57,6 +55,7 @@
 
 # TODO:
 
+- Test IMU connection & output
 - Test GPS
 - Test flightpath generation
 - Test control surface manipulation
@@ -65,4 +64,3 @@
 
 - Strobe
 - Startup
-- IMU

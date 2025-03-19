@@ -42,9 +42,11 @@ bool imu_init = false;
 bool gps_init = false;
 double start_drop_distance = 250;
 TaskHandle_t strobe_task_handle;
+TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
-TaskHandle_t autonomous_flight_task_handle;
+TaskHandle_t autonomous_flight_task_gandle;
 TaskHandle_t backup_flight_task_handle;
+SemaphoreHandle_t imu_semaphore = NULL;
 SemaphoreHandle_t gps_semaphore = NULL;
 gps_data_t gps_data;
 gps_data_t* p_gps_data = &gps_data;
@@ -214,6 +216,11 @@ void checkToStartFlight(void)
     }
 }
 
+void imuTask(void)
+{
+
+}
+
 /**
  * run 
  * - refresh imu
@@ -247,6 +254,10 @@ void autonomousFlightTask(void *pvParameters)
             xSemaphoreGive(gps_semaphore);
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
+            //Update IMU data
+            //xSemaphoreGive(imu_semaphore);
+            //ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
             // TODO: flightpath logic
 
             ESP_LOGE(TAG, "!stop");
@@ -279,6 +290,11 @@ void app_main(void)
     /**
      * ----- CREATE SEMAPHORES -----
     */
+    imu_semaphore = xSemaphoreCreateBinary();
+    if (imu_semaphore == NULL) {
+        ESP_LOGE(TAG, "Failed to create IMU semaphore");
+        return;
+    }
     gps_semaphore = xSemaphoreCreateBinary();
     if (gps_semaphore == NULL) {
         ESP_LOGE(TAG, "Failed to create GPS semaphore");
@@ -299,6 +315,7 @@ void app_main(void)
      * ----- CREATE TASKS -----
     */
     xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
+    //xTaskCreate(imuTask, "IMU Task", 4096, NULL, 8, &imu_task_handle);
     //xTaskCreate(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle);
     //xTaskCreate(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_task_handle);
     //xTaskCreate(backupFlightTask, "Backup Flight Task", 4096, NULL, 5, &backup_flight_task_handle);

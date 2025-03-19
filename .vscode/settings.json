@@ -12,7 +12,6 @@
   "files.associations": {
     "bno08x_wrapper.h": "c",
     "gpio.h": "c",
-    "freertos.h": "c",
-    "stdbool.h": "c"
+    "freertos.h": "c"
   }
 }
