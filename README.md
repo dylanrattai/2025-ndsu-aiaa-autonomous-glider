@@ -25,11 +25,6 @@
 - GPIO 45 - Yellow with green stripe
 - GPIO 39 - Yellow with green stripe
 
-# CORE JOBS
-
-- Core 0 - Strobe
-- Core 1 - Flightpath algorithm, servo manipuation
-
 # BNO085 Euler Info
 
 ## Gyro (degrees)
