@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "esp_check.h"
 #include "driver/uart.h"
 #include "bno08x_wrapper.h"
 
@@ -20,37 +21,40 @@
 #define LED_2_GPIO GPIO_NUM_11
 #define SERVO_LEFT_GPIO GPIO_NUM_2
 #define SERVO_RIGHT_GPIO GPIO_NUM_4
-#define TXD_PIN GPIO_NUM_1
-#define RXD_PIN GPIO_NUM_3
+#define TXD_PIN GPIO_NUM_43
+#define RXD_PIN GPIO_NUM_44
+#define UART_NUM UART_NUM_2
 #define START_PIN_OUT GPIO_NUM_39
 #define START_PIN_IN GPIO_NUM_45
 /*#define TXD_PIN2 GPIO_NUM_17
 #define RXD_PIN2 GPIO_NUM_16*/
 
 // Global variables
-typedef struct {
-    char latitude[20];
-    char lat_direction[4];
-    char longitude[20];
-    char lon_direction[4];
-    char altitude[10];
-} gps_data_t;
-
 bool stop = true;
 bool led_stop = true;
 bool imu_init = false;
 bool gps_init = false;
 double start_drop_distance = 250;
+double pitch;
+double roll;
+double yaw;
+double pitch_accel;
+double roll_accel;
+double yaw_accel;
+double y_accel;
+double x_accel;
+double z_accel;
+double latitutde;
+double longitude;
+double altitude;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
 TaskHandle_t autonomous_flight_task_gandle;
 TaskHandle_t backup_flight_task_handle;
-SemaphoreHandle_t imu_semaphore = NULL;
-SemaphoreHandle_t gps_semaphore = NULL;
-gps_data_t gps_data;
-gps_data_t* p_gps_data = &gps_data;
+QueueHandle_t gps_queue;
 const char *TAG = "Main";
+const int UART_BUFFER_SIZE = 1024;
 const double PI = 3.1415926535;
 const double AUTONOMOUS_START_DELAY = 1500; // 1.5 seconds before auto flight starts. time to seperate from mothership
 const double ORBIT_RADIUS = 50;
@@ -66,42 +70,55 @@ double degrees_to_radians(double degrees) {
     return degrees * PI / 180.0;
 }
 
-/**
- * return latitutde as + for N and - for S
-*/
-double getLatitude()
+esp_err_t gpsInit(void)
 {
-    if (strcmp(p_gps_data->lat_direction, "N") == 0)
-    {
-        return atof(p_gps_data->latitude);
-    }
-    else
-    {
-        return -atof(p_gps_data->latitude);
-    }
-}
+    uart_config_t gps_config = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS,
+    };
 
-/**
- * return longitude as + for E and - for W
-*/
-double getLongitude()
-{
-    if(strcmp(p_gps_data->lon_direction, "E") == 0)
-    {
-        return atof(p_gps_data->longitude);
-    }
-    else
-    {
-        return -atof(p_gps_data->longitude);
-    }
-}
+    // configure UART
+    ESP_RETURN_ON_ERROR(uart_param_config(UART_NUM, &gps_config), TAG, "Failed to configure GPS UART.");
 
-/**
- * returns the altitude in MSL estimated by the GPS
-*/
-double getMSLAltitude()
-{
-    return atof(p_gps_data->altitude);
+    // set pins
+    ESP_RETURN_ON_ERROR(uart_set_pin(UART_NUM, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE), TAG, "Failed to set GPS UART pins.");
+
+    // install driver
+    ESP_RETURN_ON_ERROR(uart_driver_install(UART_NUM, UART_BUFFER_SIZE * 2, 0, 10, &gps_queue, 0), TAG, "Failed to install GPS UART driver.");
+
+    char buffer[100];
+    int retry_count = 5;
+    bool gps_working = false;
+
+    while (retry_count > 0 && !gps_working) {
+        int length = uart_read_bytes(UART_NUM, buffer, sizeof(buffer), 1000 / portTICK_PERIOD_MS);
+        
+        if (length > 0) {
+            // Check for a valid NMEA sentence start
+            if (strstr(buffer, "$GP") != NULL || strstr(buffer, "$GN") != NULL) {
+                ESP_LOGI(TAG, "Valid GPS data received");
+                gps_working = true;
+            } else {
+                ESP_LOGW(TAG, "Received data, but not valid GPS sentence");
+            }
+        } else {
+            ESP_LOGW(TAG, "No data received from GPS, retrying...");
+        }
+        
+        retry_count--;
+        vTaskDelay(500 / portTICK_PERIOD_MS);  // Wait a half second before next attempt
+    }
+
+    if (!gps_working) {
+        ESP_LOGE(TAG, "GPS initialization failed: No valid data received");
+        return ESP_FAIL;
+    }
+
+    gps_init = true;
+    return ESP_OK;
 }
 
 /**
@@ -127,23 +144,13 @@ void strobeTask(void *pvParameters)
 
             gpio_set_level(LED_1_GPIO, 0);
             gpio_set_level(LED_2_GPIO, 0);
-            vTaskDelay(1500 / portTICK_PERIOD_MS);
+            vTaskDelay(500 / portTICK_PERIOD_MS);
         }
         else
         {
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
     }
-}
-
-void setControlSurfacePosition(double pitch, double roll, double yaw)
-{
-    // TODO
-}
-
-// Dummy function for servo (to be implemented)
-void SetServoPositionTask(int position) {
-    // Implement servo control here.
 }
 
 /**
@@ -154,10 +161,11 @@ void SetServoPositionTask(int position) {
 */
 double distanceFromOrbitPoint()
 {
+    // TODO: update lat long here 
     double earth_radius_meters = 6378137;
     double meters_to_ft = 3.28084;
-    double current_lat = getLatitude();
-    double current_long = getLongitude();
+    double current_lat = latitutde;
+    double current_long = longitude;
     double lat_1_radians = current_lat * PI / 180;
     double lat_2_radians = ORBIT_PT_LAT * PI / 180;
     double long_1_radians = current_long * PI / 180;
@@ -203,7 +211,7 @@ void checkToStartFlight(void)
     */
     if(gpio_get_level(START_PIN_IN) != 1)
     {
-        ESP_LOGE(TAG, "---------- Starting autonomous flight. ----------");
+        ESP_LOGI(TAG, "---------- Starting autonomous flight. ----------");
 
         led_stop = !led_stop;
 
@@ -214,11 +222,6 @@ void checkToStartFlight(void)
         // set start drop distance var for flightpath spiral formula
         start_drop_distance = distanceFromOrbitPoint(); 
     }
-}
-
-void imuTask(void)
-{
-
 }
 
 /**
@@ -250,13 +253,8 @@ void autonomousFlightTask(void *pvParameters)
     {
         if (!stop)
         {
-            //Update GPS data
-            xSemaphoreGive(gps_semaphore);
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            
 
-            //Update IMU data
-            //xSemaphoreGive(imu_semaphore);
-            //ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
             // TODO: flightpath logic
 
@@ -288,34 +286,27 @@ void backupFlightTask(void *pvParameters)
 void app_main(void)
 {
     /**
-     * ----- CREATE SEMAPHORES -----
-    */
-    imu_semaphore = xSemaphoreCreateBinary();
-    if (imu_semaphore == NULL) {
-        ESP_LOGE(TAG, "Failed to create IMU semaphore");
-        return;
-    }
-    gps_semaphore = xSemaphoreCreateBinary();
-    if (gps_semaphore == NULL) {
-        ESP_LOGE(TAG, "Failed to create GPS semaphore");
-        return;
-    }
-
-    /**
      * ----- INITILIZE THINGS -----
     */
     if(bno08xInit() != 0)
     {
+        imu_init = false;
         ESP_LOGE(TAG, "Failed to init IMU.");
     }
-    // 
+    else imu_init = true;
+
+    if(gpsInit() != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to init GPS.");
+    }
+    else ESP_LOGI(TAG, "GPS init successful.");
+
     sendStartSignal();
 
     /**
      * ----- CREATE TASKS -----
     */
-    xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
-    //xTaskCreate(imuTask, "IMU Task", 4096, NULL, 8, &imu_task_handle);
+    //xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
     //xTaskCreate(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle);
     //xTaskCreate(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_task_handle);
     //xTaskCreate(backupFlightTask, "Backup Flight Task", 4096, NULL, 5, &backup_flight_task_handle);
