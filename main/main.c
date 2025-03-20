@@ -44,9 +44,10 @@ double yaw_accel;
 double y_accel;
 double x_accel;
 double z_accel;
-double latitutde;
+double latitude;
 double longitude;
 double altitude;
+double gps_ground_speed;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
@@ -68,6 +69,76 @@ const double LANDING_PHASE_OFFSET_FT = 30;
 
 double degrees_to_radians(double degrees) {
     return degrees * PI / 180.0;
+}
+
+static void send_ubx_message(const uint8_t *msg, size_t len)
+{
+    int tx_bytes = uart_write_bytes(UART_NUM, (const char *)msg, len);
+    ESP_LOGI(TAG, "Sent %d bytes", tx_bytes);
+}
+
+void configure_nmea_output(void)
+{
+    // UBX-CFG-MSGOUT message for NMEA GGA on UART2:
+    // Payload: [0xF0, 0x00, rate_UART1, rate_UART2, rate_USB, rate_SPI]
+    // Enable only UART2 (rate=1) and disable all others (rate=0)
+    uint8_t ubx_cfg_nmea_gga[] = {
+        0xB5, 0x62,         // UBX header
+        0x06, 0x01,         // CFG-MSGOUT message
+        0x08, 0x00,         // Payload length = 8 bytes
+        0xF0, 0x00,         // NMEA GGA (MsgClass=F0, MsgID=00)
+        0x00,               // rate on UART1 = 0
+        0x01,               // rate on UART2 = 1
+        0x00,               // rate on USB   = 0
+        0x00,               // rate on SPI   = 0
+        0x00, 0x28          // Precalculated checksum (CK_A=0x00, CK_B=0x28)
+    };
+
+    // UBX-CFG-MSGOUT message for NMEA RMC on UART2:
+    // Payload: [0xF0, 0x04, rate_UART1, rate_UART2, rate_USB, rate_SPI]
+    // Enable only UART2 (rate=1) and disable all others (rate=0)
+    uint8_t ubx_cfg_nmea_rmc[] = {
+        0xB5, 0x62,         // UBX header
+        0x06, 0x01,         // CFG-MSGOUT message
+        0x08, 0x00,         // Payload length = 8 bytes
+        0xF0, 0x04,         // NMEA RMC (MsgClass=F0, MsgID=04)
+        0x00,               // rate on UART1 = 0
+        0x01,               // rate on UART2 = 1
+        0x00,               // rate on USB   = 0
+        0x00,               // rate on SPI   = 0
+        0x04, 0x44          // Precalculated checksum (CK_A=0x04, CK_B=0x44)
+    };
+
+    ESP_LOGI(TAG, "Configuring NMEA output on UART2");
+    send_ubx_message(ubx_cfg_nmea_gga, sizeof(ubx_cfg_nmea_gga));
+    send_ubx_message(ubx_cfg_nmea_rmc, sizeof(ubx_cfg_nmea_rmc));
+
+    // Optionally, disable other unwanted messages (e.g., GSA) here by sending similar commands.
+}
+
+// Save the current configuration to battery-backed RAM (BBR)
+static void save_configuration(void)
+{
+    // UBX-CFG-CFG message to save configuration to BBR.
+    // Message structure:
+    //  - Header: 0xB5, 0x62
+    //  - Message Class: 0x06, Message ID: 0x09
+    //  - Length: 0x0C 00 (12 bytes payload)
+    //  - Payload: clearMask (4 bytes), saveMask (4 bytes), loadMask (4 bytes)
+    //    Here: clearMask = 0, saveMask = 0x00000001 (save current config to BBR), loadMask = 0
+    //  - Checksum: pre-calculated as 0x1C, 0x97
+    uint8_t ubx_cfg_cfg_save[] = {
+        0xB5, 0x62,       // UBX header
+        0x06, 0x09,       // CFG-CFG message
+        0x0C, 0x00,       // Payload length: 12 bytes
+        0x00, 0x00, 0x00, 0x00,  // clearMask = 0
+        0x01, 0x00, 0x00, 0x00,  // saveMask = 0x00000001 (save current config to BBR)
+        0x00, 0x00, 0x00, 0x00,  // loadMask = 0
+        0x1C, 0x97        // Checksum (CK_A, CK_B)
+    };
+
+    ESP_LOGI(TAG, "Saving configuration to BBR");
+    send_ubx_message(ubx_cfg_cfg_save, sizeof(ubx_cfg_cfg_save));
 }
 
 esp_err_t gpsInit(void)
@@ -117,9 +188,135 @@ esp_err_t gpsInit(void)
         return ESP_FAIL;
     }
 
+    configure_nmea_output();
+    save_configuration();
+
     gps_init = true;
     return ESP_OK;
 }
+
+/**
+ * Parse GPS data.
+ * Returns 0 for GNGGA refresh (lat, long, alt), returns 1 for GNRMC refresh (lat, long, speed), returns -1 for invalid data.
+*/
+// New parser function that takes a complete NMEA sentence
+int parseGPS(const char *line)
+{
+    ESP_LOGI(TAG, "Parsing GPS data: %s", line);
+
+    if(strncmp(line, "$GNGGA", 6) == 0)
+    {
+        ESP_LOGI(TAG, "Parsing GNGGA data: %s", line);
+        char temp[100];
+        strncpy(temp, line, sizeof(temp));
+        char *tokens[20];
+        int token_count = 0;
+        char *token = strtok(temp, ",");
+
+        while(token != NULL && token_count < 20)
+        {
+            tokens[token_count++] = token;
+            token = strtok(NULL, ",");
+        }
+
+        if(token_count >= 10)
+        {
+            latitude = atof(tokens[2]);
+            if(tokens[3][0] == 'S')
+            {
+                latitude *= -1;
+            }
+
+            longitude = atof(tokens[4]);
+            if(tokens[5][0] == 'W')
+            {
+                longitude *= -1;
+            }
+
+            altitude = atof(tokens[9]);
+
+            return 0;
+        }
+    }
+    else if(strncmp(line, "$GNRMC", 6) == 0)
+    {
+        ESP_LOGI(TAG, "Parsing GNRMC data: %s", line);
+        char temp[100];
+        strncpy(temp, line, sizeof(temp));
+        char *tokens[20];
+        int token_count = 0;
+        char *token = strtok(temp, ",");
+
+        while(token != NULL && token_count < 20)
+        {
+            tokens[token_count++] = token;
+            token = strtok(NULL, ",");
+        }
+
+        if(token_count >= 8)
+        {
+            latitude = atof(tokens[3]);
+            if(tokens[4][0] == 'S')
+            {
+                latitude *= -1;
+            }
+
+            longitude = atof(tokens[5]);
+            if(tokens[6][0] == 'W')
+            {
+                longitude *= -1;
+            }
+
+            gps_ground_speed = atof(tokens[7]);
+
+            return 1;
+        }
+    }
+    return -1;
+}
+
+void refreshGps(void)
+{
+    ESP_LOGI(TAG, "Refreshing GPS data...");
+    char buffer[256];  // Use a larger buffer
+    int length = uart_read_bytes(UART_NUM, buffer, sizeof(buffer) - 1, 1000 / portTICK_PERIOD_MS);
+    if(length > 0)
+    {
+        buffer[length] = '\0';  // Null-terminate
+    }
+    
+    bool refreshed_alt = false;
+    bool refreshed_speed = false;
+
+    // Split the buffer into lines by "\r\n"
+    char *line = strtok(buffer, "\r\n");
+    while(line != NULL)
+    {
+        ESP_LOGI(TAG, "Processing line: %s", line);
+        int result = parseGPS(line);
+        ESP_LOGI(TAG, "Result: %d", result);
+
+        if(result == 0)
+        {
+            refreshed_alt = true;
+        }
+        else if(result == 1)
+        {
+            refreshed_speed = true;
+        }
+
+        if(refreshed_alt && refreshed_speed)
+        {
+            break;
+        }
+
+        line = strtok(NULL, "\r\n");
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    ESP_LOGI(TAG, "Parsed GPS data: lat: %f, long: %f, alt: %f, speed: %f", latitude, longitude, altitude, gps_ground_speed);
+}
+
 
 /**
  * Strobe 2 leds in the same pattern as the ones on commercial jets
@@ -161,10 +358,10 @@ void strobeTask(void *pvParameters)
 */
 double distanceFromOrbitPoint()
 {
-    // TODO: update lat long here 
+    refreshGps();
     double earth_radius_meters = 6378137;
     double meters_to_ft = 3.28084;
-    double current_lat = latitutde;
+    double current_lat = latitude;
     double current_long = longitude;
     double lat_1_radians = current_lat * PI / 180;
     double lat_2_radians = ORBIT_PT_LAT * PI / 180;
@@ -314,7 +511,9 @@ void app_main(void)
     // every 10ms check to start the plane, stops once started
     while (stop)
     {
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-        checkToStartFlight();
+        //vTaskDelay(10 / portTICK_PERIOD_MS);
+        //checkToStartFlight();
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        refreshGps();
     }
 }
