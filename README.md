@@ -1,5 +1,7 @@
 # PINOUT MAP
 
+- GPIO 16 - Dead maybe
+
 - GPIO 10 - LED - Gray
 - GPIO 11 - LED 2 - Gray
 
@@ -8,7 +10,7 @@
 
 ## IMU, using SPI
 
-- GPIO 16 - IMU INT - Purple
+- GPIO 6 - IMU INT - Purple
 - GPIO 15 - IMU reset - Brown
 - GPIO 7 - IMU chip select - Silver
 - GPIO 18 - IMU SCL - Blue
@@ -50,8 +52,6 @@
 
 # TODO:
 
-- Test IMU connection & output
-- Test GPS
 - Test flightpath generation
 - Test control surface manipulation
 
@@ -59,3 +59,5 @@
 
 - Strobe
 - Startup
+- Test GPS
+- Test IMU connection & output
