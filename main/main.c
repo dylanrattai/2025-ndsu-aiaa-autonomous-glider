@@ -295,6 +295,18 @@ int parseGPS(const char *line)
     return -1;
 }
 
+double convertToDecimalDegrees(double ddmm) {
+    double absVal = fabs(ddmm);
+    double degrees = floor(absVal / 100.0);
+    double minutes = absVal - (degrees * 100.0);
+    double decimalDegrees = degrees + minutes / 60.0;
+    // Reapply the negative sign if needed.
+    if (ddmm < 0) {
+        decimalDegrees = -decimalDegrees;
+    }
+    return decimalDegrees;
+}
+
 /**
  * Refresh GPS data.
  * Reads from the UART buffer and parses the data.
@@ -336,6 +348,13 @@ void refreshGps(void)
 
         line = strtok(NULL, "\r\n");
         vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    if (fabs(latitude) > 100) {
+        latitude = convertToDecimalDegrees(latitude);
+    }
+    if (fabs(longitude) > 100) {
+        longitude = convertToDecimalDegrees(longitude);
     }
 
     ESP_LOGI(TAG, "Parsed GPS data: lat: %f, long: %f, alt: %f, speed: %f", latitude, longitude, altitude, gps_ground_speed);
