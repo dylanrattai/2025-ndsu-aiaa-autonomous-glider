@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdint.h>
+#include <sys/time.h>
 #include "sdkconfig.h"
 #include "esp_flash.h"
 #include "esp_system.h"
@@ -14,6 +15,7 @@
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "driver/uart.h"
+#include "driver/ledc.h"
 #include "bno08x_wrapper.h"
 
 // PINOUT MAP, etc. (unchanged)
@@ -30,6 +32,11 @@
 #define RXD_PIN2 GPIO_NUM_16*/
 
 // Global variables
+typedef struct {
+    uint32_t min_us;
+    uint32_t max_us;
+} servo_params_t;
+struct timeval tv;
 bool stop = true;
 bool led_stop = true;
 bool imu_init = false;
@@ -48,15 +55,19 @@ double latitude;
 double longitude;
 double altitude;
 double gps_ground_speed;
+double start_time;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
-TaskHandle_t autonomous_flight_task_gandle;
+TaskHandle_t autonomous_flight_task_handle;
 TaskHandle_t backup_flight_task_handle;
 QueueHandle_t gps_queue;
+ledc_channel_config_t left_servo_channel;
+ledc_channel_config_t right_servo_channel;
 const char *TAG = "Main";
 const int UART_BUFFER_SIZE = 1024;
 const double PI = 3.1415926535;
+const double E = 2.718281828459045;
 const double AUTONOMOUS_START_DELAY = 1500; // 1.5 seconds before auto flight starts. time to seperate from mothership
 const double ORBIT_RADIUS = 50;
 const double COMP_ORBIT_PT_LAT = 32.26558491693584; // copied from google maps (100ft northeast of runway)
@@ -66,6 +77,11 @@ const double ORBIT_PT_LAT = 0;
 const double ORBIT_PT_LONG = 0;
 const double ORBIT_MSL_GROUND = 0;
 const double LANDING_PHASE_OFFSET_FT = 30;
+const double MAX_BANK_ANGLE = 45;
+const servo_params_t left_servo_params = { .min_us = 800, .max_us = 2500 };
+const servo_params_t right_servo_params = { .min_us = 400, .max_us = 2300 };
+const double SERVO_MAX_DEGREE = 180;
+const double DESCENT_RATE = -3; // control surface degrees
 
 double degrees_to_radians(double degrees) {
     return degrees * PI / 180.0;
@@ -141,6 +157,10 @@ static void save_configuration(void)
     send_ubx_message(ubx_cfg_cfg_save, sizeof(ubx_cfg_cfg_save));
 }
 
+/**
+ * Initialize GPS.
+ * Configure UART, set pins, install driver, and check for valid data.
+*/
 esp_err_t gpsInit(void)
 {
     uart_config_t gps_config = {
@@ -275,6 +295,10 @@ int parseGPS(const char *line)
     return -1;
 }
 
+/**
+ * Refresh GPS data.
+ * Reads from the UART buffer and parses the data.
+*/
 void refreshGps(void)
 {
     ESP_LOGI(TAG, "Refreshing GPS data...");
@@ -317,7 +341,6 @@ void refreshGps(void)
     ESP_LOGI(TAG, "Parsed GPS data: lat: %f, long: %f, alt: %f, speed: %f", latitude, longitude, altitude, gps_ground_speed);
 }
 
-
 /**
  * Strobe 2 leds in the same pattern as the ones on commercial jets
  * (Flash, 1.5 sec wait, repeat)
@@ -356,7 +379,7 @@ void strobeTask(void *pvParameters)
  * 1 is current
  * 2 is orbit pt
 */
-double distanceFromOrbitPoint()
+double distanceFromOrbitPoint(void)
 {
     refreshGps();
     double earth_radius_meters = 6378137;
@@ -418,6 +441,103 @@ void checkToStartFlight(void)
         stop = !stop;
         // set start drop distance var for flightpath spiral formula
         start_drop_distance = distanceFromOrbitPoint(); 
+        start_time = gettimeofday(&tv, NULL);
+    }
+}
+
+static uint32_t servo_per_degree_init(uint32_t user_angle, servo_params_t params) {
+    // Convert user angle (0–180) to native servo angle (-90 to +90)
+    int native_angle = (int)user_angle - 90;  
+    // Shift native angle from [-90, +90] to [0, 180]
+    int shifted = native_angle + 90;
+    // Map the shifted value [0, 180] to the pulse width range defined in params.
+    uint32_t pulsewidth = ((params.max_us - params.min_us) * shifted) / 180 + params.min_us;
+    return pulsewidth;
+}
+
+// Modified set_servo_angle now takes calibration parameters as well.
+void set_servo_angle(ledc_channel_config_t *channel, uint32_t user_angle, servo_params_t params)
+{
+    uint32_t pulsewidth = servo_per_degree_init(user_angle, params);
+    // For a 50 Hz PWM signal, period = 20000 µs.
+    // With 13-bit resolution, maximum duty is 8192.
+    uint32_t duty = (pulsewidth * 8192) / 20000;
+    ledc_set_duty(channel->speed_mode, channel->channel, duty);
+    ledc_update_duty(channel->speed_mode, channel->channel);
+}
+
+void setupControlSurfaces(void)
+{
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_LOW_SPEED_MODE,
+        .timer_num        = LEDC_TIMER_0,
+        .duty_resolution  = LEDC_TIMER_13_BIT,  // 13-bit resolution (8192 steps)
+        .freq_hz          = 50,                 // 50 Hz for servo control
+        .clk_cfg          = LEDC_AUTO_CLK,
+    };
+    ledc_timer_config(&ledc_timer);
+
+    // 2. Configure the LEDC channel for the left servo on SERVO_LEFT_GPIO (GPIO_NUM_2)
+    left_servo_channel.speed_mode     = LEDC_LOW_SPEED_MODE,
+    left_servo_channel.channel        = LEDC_CHANNEL_0,
+    left_servo_channel.timer_sel      = LEDC_TIMER_0,
+    left_servo_channel.intr_type      = LEDC_INTR_DISABLE,
+    left_servo_channel.gpio_num       = SERVO_LEFT_GPIO,
+    left_servo_channel.duty           = 0,      // Initially off
+    left_servo_channel.hpoint         = 0,
+    ledc_channel_config(&left_servo_channel);
+
+    // 3. Configure the LEDC channel for the right servo on SERVO_RIGHT_GPIO (GPIO_NUM_4)
+    right_servo_channel.speed_mode     = LEDC_LOW_SPEED_MODE,
+    right_servo_channel.channel        = LEDC_CHANNEL_1,
+    right_servo_channel.timer_sel      = LEDC_TIMER_0,
+    right_servo_channel.intr_type      = LEDC_INTR_DISABLE,
+    right_servo_channel.gpio_num       = SERVO_RIGHT_GPIO,
+    right_servo_channel.duty           = 0,      // Initially off
+    right_servo_channel.hpoint         = 0,
+    ledc_channel_config(&right_servo_channel);
+
+
+}
+
+/**
+ * get the current distance from the orbit point
+ * 
+ * returns the distance in feet, - for left correction needed, + for right correction needed
+*/
+double getCorrectionNeeded(void)
+{
+    double estimated_distance = start_drop_distance * pow(E, -(gettimeofday(&tv, NULL) - start_time) / (2 * PI));
+    double current_distance = distanceFromOrbitPoint();
+
+    return estimated_distance - current_distance;
+}
+
+void setControlSurfacesHorizontal(void)
+{
+    double correction_needed = getCorrectionNeeded();
+    ESP_LOGI(TAG, "Correction needed: %f", correction_needed);
+    
+    double set_to_angle = 4 * correction_needed;
+    ESP_LOGI(TAG, "Setting control surfaces to angle: %f", set_to_angle);
+
+    if(set_to_angle > MAX_BANK_ANGLE)
+    {
+        ESP_LOGI(TAG, "Setting control surfaces to max bank angle.");
+        set_servo_angle(&right_servo_channel, 90 - MAX_BANK_ANGLE - DESCENT_RATE, right_servo_params);
+        set_servo_angle(&left_servo_channel, 90 - MAX_BANK_ANGLE + DESCENT_RATE, left_servo_params);
+    }
+    else if(set_to_angle < -MAX_BANK_ANGLE)
+    {
+        ESP_LOGI(TAG, "Setting control surfaces to max bank angle.");
+        set_servo_angle(&right_servo_channel, 90 + MAX_BANK_ANGLE - DESCENT_RATE, right_servo_params);
+        set_servo_angle(&left_servo_channel, 90 + MAX_BANK_ANGLE + DESCENT_RATE, left_servo_params);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Setting control surfaces to calculated angle.");
+        set_servo_angle(&right_servo_channel, 90 - set_to_angle - DESCENT_RATE, right_servo_params);
+        set_servo_angle(&left_servo_channel, 90 - set_to_angle + DESCENT_RATE, left_servo_params);
     }
 }
 
@@ -450,17 +570,10 @@ void autonomousFlightTask(void *pvParameters)
     {
         if (!stop)
         {
-            
-
-
-            // TODO: flightpath logic
-
-            ESP_LOGE(TAG, "!stop");
+            setControlSurfacesHorizontal();
         }
 
-        vTaskDelay(50 / portTICK_PERIOD_MS);
-
-        ESP_LOGE(TAG, "Test");
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 
@@ -499,21 +612,23 @@ void app_main(void)
     else ESP_LOGI(TAG, "GPS init successful.");
 
     sendStartSignal();
+    setupControlSurfaces();
+
+    set_servo_angle(&right_servo_channel, 90, right_servo_params);
+    set_servo_angle(&left_servo_channel, 90, left_servo_params);
 
     /**
      * ----- CREATE TASKS -----
     */
-    //xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
+    xTaskCreate(strobeTask, "StrobeTask", 1000, NULL, 10, &strobe_task_handle);
     //xTaskCreate(gpsTask, "GPS Task", 4096, NULL, 8, &gps_task_handle);
-    //xTaskCreate(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_task_handle);
+    xTaskCreate(autonomousFlightTask, "Auto Flight Task", 8192, NULL, 9, &autonomous_flight_task_handle);
     //xTaskCreate(backupFlightTask, "Backup Flight Task", 4096, NULL, 5, &backup_flight_task_handle);
 
     // every 10ms check to start the plane, stops once started
     while (stop)
     {
-        //vTaskDelay(10 / portTICK_PERIOD_MS);
-        //checkToStartFlight();
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        refreshGps();
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+        checkToStartFlight();
     }
 }

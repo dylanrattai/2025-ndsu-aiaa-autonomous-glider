@@ -12,6 +12,9 @@
   "files.associations": {
     "bno08x_wrapper.h": "c",
     "gpio.h": "c",
-    "freertos.h": "c"
+    "freertos.h": "c",
+    "__tree": "c",
+    "bitset": "c",
+    "set": "c"
   }
 }
