@@ -460,7 +460,8 @@ void checkToStartFlight(void)
         stop = !stop;
         // set start drop distance var for flightpath spiral formula
         start_drop_distance = distanceFromOrbitPoint(); 
-        start_time = gettimeofday(&tv, NULL);
+        gettimeofday(&tv, NULL);
+        start_time = tv.tv_sec + tv.tv_usec / 1e6;
     }
 }
 
@@ -526,8 +527,16 @@ void setupControlSurfaces(void)
 */
 double getCorrectionNeeded(void)
 {
-    double estimated_distance = start_drop_distance * pow(E, -(gettimeofday(&tv, NULL) - start_time) / (2 * PI));
     double current_distance = distanceFromOrbitPoint();
+    gettimeofday(&tv, NULL);
+    double current_time = tv.tv_sec + tv.tv_usec / 1e6;
+    double estimated_distance = start_drop_distance * pow(E, -(current_time - start_time) / (2 * PI));
+
+    // if in 50' orbit radius, tolerance of 10'
+    if((current_distance <= ORBIT_RADIUS + 10) && (current_distance >= ORBIT_RADIUS - 10))
+    {
+        estimated_distance = ORBIT_RADIUS;
+    }
 
     return estimated_distance - current_distance;
 }
