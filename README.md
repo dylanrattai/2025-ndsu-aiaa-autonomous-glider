@@ -53,11 +53,11 @@
 # TODO:
 
 - Test flightpath generation
-- Test control surface manipulation
 
 # Verified working
 
 - Strobe
+- Test control surface manipulation
 - Startup
 - Test GPS
 - Test IMU connection & output

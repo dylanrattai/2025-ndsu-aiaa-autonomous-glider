@@ -56,6 +56,7 @@ double longitude;
 double altitude;
 double gps_ground_speed;
 double start_time;
+double start_altitude;
 TaskHandle_t strobe_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t gps_task_handle;
@@ -82,6 +83,7 @@ const servo_params_t left_servo_params = { .min_us = 800, .max_us = 2500 };
 const servo_params_t right_servo_params = { .min_us = 400, .max_us = 2300 };
 const double SERVO_MAX_DEGREE = 180;
 const double DESCENT_RATE = -3; // control surface degrees
+const double CONTROL_ALTITUDE = 50;
 
 double degrees_to_radians(double degrees) {
     return degrees * PI / 180.0;
@@ -456,12 +458,21 @@ void checkToStartFlight(void)
 
         vTaskDelay(AUTONOMOUS_START_DELAY / portTICK_PERIOD_MS);
 
+        refreshGps();
+
         // start autonomous flight
         stop = !stop;
         // set start drop distance var for flightpath spiral formula
         start_drop_distance = distanceFromOrbitPoint(); 
         gettimeofday(&tv, NULL);
         start_time = tv.tv_sec + tv.tv_usec / 1e6;
+        start_altitude = altitude;
+
+        // in case gps isnt giving a valid altitude on init
+        if(start_altitude < CONTROL_ALTITUDE)
+        {
+            start_altitude = CONTROL_ALTITUDE;
+        }
     }
 }
 
@@ -541,7 +552,16 @@ double getCorrectionNeeded(void)
     return estimated_distance - current_distance;
 }
 
-void setControlSurfacesHorizontal(void)
+double getAltitudeCorrection(void)
+{
+    gettimeofday(&tv, NULL);
+    double current_time = tv.tv_sec + tv.tv_usec / 1e6;
+    // y=mx+b
+    double estimated_altitude = -1 * current_time + start_altitude;
+    return estimated_altitude - altitude;
+}
+
+void setHorizontalControlSurfaces(void)
 {
     double correction_needed = getCorrectionNeeded();
     ESP_LOGI(TAG, "Correction needed: %f", correction_needed);
@@ -549,23 +569,25 @@ void setControlSurfacesHorizontal(void)
     double set_to_angle = 4 * correction_needed;
     ESP_LOGI(TAG, "Setting control surfaces to angle: %f", set_to_angle);
 
-    if(set_to_angle > MAX_BANK_ANGLE)
+    double set_elevator_angle = getAltitudeCorrection();
+
+    if(set_to_angle + set_elevator_angle > MAX_BANK_ANGLE)
     {
         ESP_LOGI(TAG, "Setting control surfaces to max bank angle.");
-        set_servo_angle(&right_servo_channel, 90 - MAX_BANK_ANGLE - DESCENT_RATE, right_servo_params);
-        set_servo_angle(&left_servo_channel, 90 - MAX_BANK_ANGLE + DESCENT_RATE, left_servo_params);
+        set_servo_angle(&right_servo_channel, 90 - MAX_BANK_ANGLE - set_elevator_angle, right_servo_params);
+        set_servo_angle(&left_servo_channel, 90 - MAX_BANK_ANGLE + set_elevator_angle, left_servo_params);
     }
-    else if(set_to_angle < -MAX_BANK_ANGLE)
+    else if(set_to_angle + set_elevator_angle < -MAX_BANK_ANGLE)
     {
         ESP_LOGI(TAG, "Setting control surfaces to max bank angle.");
-        set_servo_angle(&right_servo_channel, 90 + MAX_BANK_ANGLE - DESCENT_RATE, right_servo_params);
-        set_servo_angle(&left_servo_channel, 90 + MAX_BANK_ANGLE + DESCENT_RATE, left_servo_params);
+        set_servo_angle(&right_servo_channel, 90 + MAX_BANK_ANGLE - set_elevator_angle, right_servo_params);
+        set_servo_angle(&left_servo_channel, 90 + MAX_BANK_ANGLE + set_elevator_angle, left_servo_params);
     }
     else
     {
         ESP_LOGI(TAG, "Setting control surfaces to calculated angle.");
-        set_servo_angle(&right_servo_channel, 90 - set_to_angle - DESCENT_RATE, right_servo_params);
-        set_servo_angle(&left_servo_channel, 90 - set_to_angle + DESCENT_RATE, left_servo_params);
+        set_servo_angle(&right_servo_channel, 90 - set_to_angle - set_elevator_angle, right_servo_params);
+        set_servo_angle(&left_servo_channel, 90 - set_to_angle + set_elevator_angle, left_servo_params);
     }
 }
 
@@ -598,7 +620,7 @@ void autonomousFlightTask(void *pvParameters)
     {
         if (!stop)
         {
-            setControlSurfacesHorizontal();
+            setHorizontalControlSurfaces();
         }
 
         vTaskDelay(10 / portTICK_PERIOD_MS);
