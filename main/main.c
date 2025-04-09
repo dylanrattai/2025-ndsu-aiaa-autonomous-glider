@@ -19,8 +19,8 @@
 #include "bno08x_wrapper.h"
 
 // PINOUT MAP, etc. (unchanged)
-#define LED_1_GPIO GPIO_NUM_10
-#define LED_2_GPIO GPIO_NUM_11
+#define LED_1_GPIO GPIO_NUM_10 //10
+#define LED_2_GPIO GPIO_NUM_11 //11
 #define SERVO_LEFT_GPIO GPIO_NUM_2
 #define SERVO_RIGHT_GPIO GPIO_NUM_4
 #define TXD_PIN GPIO_NUM_43
@@ -70,17 +70,17 @@ const int UART_BUFFER_SIZE = 1024;
 const double PI = 3.1415926535;
 const double E = 2.718281828459045;
 const double AUTONOMOUS_START_DELAY = 1500; // 1.5 seconds before auto flight starts. time to seperate from mothership
-const double ORBIT_RADIUS = 50;
+const double ORBIT_RADIUS = 15; // comp 50'
 const double COMP_ORBIT_PT_LAT = 32.26558491693584; // copied from google maps (100ft northeast of runway)
 const double COMP_ORBIT_PT_LONG = -111.27351705189541; // copied from google maps
 const double COMP_MSL_GROUND = 2188.3;
-const double ORBIT_PT_LAT = 0;
-const double ORBIT_PT_LONG = 0;
-const double ORBIT_MSL_GROUND = 0;
+const double ORBIT_PT_LAT = COMP_ORBIT_PT_LAT; // REAL
+const double ORBIT_PT_LONG = COMP_ORBIT_PT_LONG; // REAL
+const double ORBIT_MSL_GROUND = COMP_MSL_GROUND; // REAL
 const double LANDING_PHASE_OFFSET_FT = 30;
-const double MAX_BANK_ANGLE = 45;
-const servo_params_t left_servo_params = { .min_us = 800, .max_us = 2500 };
-const servo_params_t right_servo_params = { .min_us = 400, .max_us = 2300 };
+const double MAX_BANK_ANGLE = 25;
+const servo_params_t left_servo_params = { .min_us = 500, .max_us = 1500 };
+const servo_params_t right_servo_params = { .min_us = 0, .max_us = 2100 };
 const double SERVO_MAX_DEGREE = 180;
 const double DESCENT_RATE = -3; // control surface degrees
 const double CONTROL_ALTITUDE = 50;
@@ -170,7 +170,7 @@ esp_err_t gpsInit(void)
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
     };
 
     // configure UART
@@ -207,6 +207,7 @@ esp_err_t gpsInit(void)
 
     if (!gps_working) {
         ESP_LOGE(TAG, "GPS initialization failed: No valid data received");
+        gps_init = false;
         return ESP_FAIL;
     }
 
@@ -224,6 +225,11 @@ esp_err_t gpsInit(void)
 // New parser function that takes a complete NMEA sentence
 int parseGPS(const char *line)
 {
+    if(gps_init == false)
+    {
+        ESP_LOGE(TAG, "GPS not initialized.");
+        return -1;
+    }
     ESP_LOGI(TAG, "Parsing GPS data: %s", line);
 
     if(strncmp(line, "$GNGGA", 6) == 0)
@@ -315,6 +321,11 @@ double convertToDecimalDegrees(double ddmm) {
 */
 void refreshGps(void)
 {
+    if(gps_init == false)
+    {
+        ESP_LOGE(TAG, "GPS not initialized.");
+        return;
+    }
     ESP_LOGI(TAG, "Refreshing GPS data...");
     char buffer[256];  // Use a larger buffer
     int length = uart_read_bytes(UART_NUM, buffer, sizeof(buffer) - 1, 1000 / portTICK_PERIOD_MS);
@@ -379,6 +390,7 @@ void strobeTask(void *pvParameters)
     {
         if(!led_stop)
         {
+            ESP_LOGI(TAG, "Strobe LEDs");
             gpio_set_level(LED_1_GPIO, 1);
             gpio_set_level(LED_2_GPIO, 1);
             vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -454,11 +466,13 @@ void checkToStartFlight(void)
     {
         ESP_LOGI(TAG, "---------- Starting autonomous flight. ----------");
 
+        vTaskDelay(500 / portTICK_PERIOD_MS);
         led_stop = !led_stop;
+        ESP_LOGI(TAG, "LED Strobe: %s", led_stop ? "OFF" : "ON");
 
         vTaskDelay(AUTONOMOUS_START_DELAY / portTICK_PERIOD_MS);
 
-        refreshGps();
+        //refreshGps();
 
         // start autonomous flight
         stop = !stop;
@@ -571,6 +585,11 @@ void setHorizontalControlSurfaces(void)
 
     double set_elevator_angle = getAltitudeCorrection();
 
+    if(latitude == 0 || longitude == 0){
+        ESP_LOGI(TAG, "GPS data not valid, skipping control surface adjustment.");
+        return;
+    }
+
     if(set_to_angle + set_elevator_angle > MAX_BANK_ANGLE)
     {
         ESP_LOGI(TAG, "Setting control surfaces to max bank angle.");
@@ -648,12 +667,12 @@ void app_main(void)
     /**
      * ----- INITILIZE THINGS -----
     */
-    if(bno08xInit() != 0)
+    /*if(bno08xInit() != 0)
     {
         imu_init = false;
         ESP_LOGE(TAG, "Failed to init IMU.");
     }
-    else imu_init = true;
+    else imu_init = true;*/
 
     if(gpsInit() != ESP_OK)
     {
@@ -678,7 +697,18 @@ void app_main(void)
     // every 10ms check to start the plane, stops once started
     while (stop)
     {
+        ESP_LOGI(TAG, "180");
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        set_servo_angle(&left_servo_channel, 180, left_servo_params);
+        ESP_LOGI(TAG, "180");
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        set_servo_angle(&left_servo_channel, 90, left_servo_params);
+        ESP_LOGI(TAG, "180");
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        set_servo_angle(&left_servo_channel, 0, left_servo_params);
+
+        /*
         vTaskDelay(10 / portTICK_PERIOD_MS);
-        checkToStartFlight();
+        checkToStartFlight();*/
     }
 }
