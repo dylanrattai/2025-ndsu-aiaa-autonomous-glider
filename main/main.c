@@ -697,18 +697,7 @@ void app_main(void)
     // every 10ms check to start the plane, stops once started
     while (stop)
     {
-        ESP_LOGI(TAG, "180");
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        set_servo_angle(&left_servo_channel, 180, left_servo_params);
-        ESP_LOGI(TAG, "180");
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        set_servo_angle(&left_servo_channel, 90, left_servo_params);
-        ESP_LOGI(TAG, "180");
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        set_servo_angle(&left_servo_channel, 0, left_servo_params);
-
-        /*
         vTaskDelay(10 / portTICK_PERIOD_MS);
-        checkToStartFlight();*/
+        checkToStartFlight();
     }
 }
